@@ -29,6 +29,9 @@ export class Player {
 
   update(dt) {
     const g = this.g, k = g.input.keys;
+    // тряска и красная вспышка урона гаснут всегда — и в полёте, и после смерти
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 1.8);
+    if (this.dmgFlash > 0) this.dmgFlash = Math.max(0, this.dmgFlash - dt * 1.5);
     if (!this.alive) return;
     const ctl = g.ui.captured && !g.ui.typing;
     let f = 0, s = 0;
@@ -88,8 +91,6 @@ export class Player {
     const maxSt = this.perks.stamina;
     if (this.sprint) this.stamina = Math.max(0, this.stamina - 13 * dt);
     else this.stamina = Math.min(maxSt, this.stamina + (this.grounded ? 16 : 6) * dt);
-    if (this.dmgFlash > 0) this.dmgFlash = Math.max(0, this.dmgFlash - dt * 1.5);
-    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 1.8);
 
     // шаги
     const hs = Math.hypot(this.vel.x, this.vel.z);
