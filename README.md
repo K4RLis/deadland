@@ -46,8 +46,10 @@
 | Пистолет-пулемёт | `assets/sfx/smg.wav` |
 | Дробовик | `assets/sfx/shotgun.wav` |
 | Автомат | `assets/sfx/rifle.wav` |
-| АС «Вал» | `assets/sfx/asval.wav` (уже есть) |
+| АС «Вал» | `assets/sfx/asval.wav` |
 | Снайперская винтовка | `assets/sfx/sniper.wav` |
+
+Сейчас все шесть — записанные звуки, синтез остаётся запасным вариантом, если файла нет.
 
 ## Мультиплеер
 
