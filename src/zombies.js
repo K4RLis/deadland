@@ -1,7 +1,7 @@
 // Зомби: симуляция на хосте (ИИ, поиск пути, атаки блоков) и отрисовка у всех.
 import * as THREE from 'three';
 import * as C from './config.js';
-import { ZOMBIE_LOOK, animate, makeNameTag, setLod } from './models.js';
+import { ZOMBIE_LOOK, animate, animateDeath, makeNameTag, setLod } from './models.js';
 import { angleLerp, clamp } from './rng.js';
 import { topAt, rayBox } from './physics.js';
 
@@ -547,6 +547,7 @@ export class ZombieViews {
       }
       this.map.set(id, v);
     }
+    if (hpf < v.hpf - 0.001) v.hitT = 1; // попадание — зомби вздрагивает
     v.tx = x; v.ty = y; v.tz = z; v.tyaw = yaw; v.hpf = hpf; v.seen = now;
     if (st === 3 && v.st !== 3) v.atk = 0;
     if (st === 2 && v.st !== 2 && v.st !== 3) { this.g.sfx.groan(v.mesh.position, v.T.pitch, true); v.groanT = 3 + Math.random() * 5; }
@@ -576,7 +577,7 @@ export class ZombieViews {
     for (const v of this.map.values()) {
       if (v.dead) {
         v.deadT += dt;
-        v.mesh.rotation.x = -Math.min(Math.PI / 2, v.deadT * 4);
+        animateDeath(v.mesh, v.deadT);
         if (v.deadT > 5) v.mesh.position.y -= dt * 0.5;
         if (v.deadT > 7) this.remove(v.id);
         continue;
@@ -593,8 +594,9 @@ export class ZombieViews {
       v.mesh.visible = d < 170;
       const far = d > (v.T.boss ? 70 : 32);
       if (v.far !== far) { v.far = far; setLod(v.mesh, far); }
-      if (v.st === 3) v.atk = (v.atk + dt * 2.2) % 1; else v.atk = 0;
-      if (v.mesh.visible && d < 90) animate(v.mesh, dt, sp, { atk: v.st === 3 ? Math.sin(v.atk * Math.PI) : 0 });
+      if (v.st === 3) v.atk = (v.atk + dt / Math.max(0.7, v.T.rate)) % 1; else v.atk = 0; // один замах — один удар
+      v.hitT = Math.max(0, (v.hitT || 0) - dt * 4);
+      if (v.mesh.visible && d < 90) animate(v.mesh, dt, sp, { atk: v.st === 3 ? v.atk : -1, hit: v.hitT });
       v.groanT -= dt;
       if (v.groanT <= 0) {
         v.groanT = 4 + Math.random() * 9;

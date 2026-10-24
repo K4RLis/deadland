@@ -18,37 +18,70 @@ export function shade(col, f) {
 
 const _v = new THREE.Vector3();
 const _rm = new THREE.Matrix4(), _re = new THREE.Euler();
+// после загрузки на видеокарту копия массива в памяти браузера больше не нужна
+function freeArray() { this.array = null; }
 
 export class MeshBuilder {
   // facet — разброс яркости между треугольниками: гранёный «полигональный» вид.
   // flat — без нормалей и с компактными цветами (вдвое меньше памяти); материал тогда нужен с flatShading:
   // нормаль грани видеокарта считает сама
-  constructor(facet = 0, flat = false) { this.p = []; this.n = []; this.c = []; this.facet = facet; this.k = 0; this.flat = flat; }
-  get empty() { return this.p.length === 0; }
+  // данные сразу пишутся в растущие типизированные массивы (у flat цвет — 16 бит), без промежуточных JS-массивов
+  constructor(facet = 0, flat = false) {
+    this.facet = facet; this.k = 0; this.flat = flat;
+    this.len = 0; this.cap = 0; this.p = null; this.n = null; this.c = null;
+  }
+  get empty() { return this.len === 0; }
+
+  grow(need) {
+    if (this.len + need <= this.cap) return;
+    let cap = Math.max(9 * 1024, this.cap * 2);
+    while (cap < this.len + need) cap *= 2;
+    const p = new Float32Array(cap), c = this.flat ? new Uint16Array(cap) : new Float32Array(cap);
+    if (this.p) { p.set(this.p.subarray(0, this.len)); c.set(this.c.subarray(0, this.len)); }
+    if (!this.flat) { const n = new Float32Array(cap); if (this.n) n.set(this.n.subarray(0, this.len)); this.n = n; }
+    this.p = p; this.c = c; this.cap = cap;
+  }
+
+  // цвет трёх вершин (у flat — в 16-битной шкале)
+  putCol(o, r, g, b) {
+    const c = this.c;
+    if (this.flat) {
+      r = Math.min(65535, Math.round(r * 65535)); g = Math.min(65535, Math.round(g * 65535)); b = Math.min(65535, Math.round(b * 65535));
+    }
+    c[o] = r; c[o + 1] = g; c[o + 2] = b; c[o + 3] = r; c[o + 4] = g; c[o + 5] = b; c[o + 6] = r; c[o + 7] = g; c[o + 8] = b;
+  }
 
   tri(ax, ay, az, bx, by, bz, cx, cy, cz, col) {
-    const ux = bx - ax, uy = by - ay, uz = bz - az;
-    const vx = cx - ax, vy = cy - ay, vz = cz - az;
-    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const l = Math.hypot(nx, ny, nz) || 1;
-    nx /= l; ny /= l; nz /= l;
-    this.p.push(ax, ay, az, bx, by, bz, cx, cy, cz);
-    if (!this.flat) this.n.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
+    this.grow(9);
+    const o = this.len, p = this.p;
+    p[o] = ax; p[o + 1] = ay; p[o + 2] = az; p[o + 3] = bx; p[o + 4] = by; p[o + 5] = bz; p[o + 6] = cx; p[o + 7] = cy; p[o + 8] = cz;
+    if (!this.flat) {
+      const ux = bx - ax, uy = by - ay, uz = bz - az;
+      const vx = cx - ax, vy = cy - ay, vz = cz - az;
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      nx /= l; ny /= l; nz /= l;
+      const n = this.n;
+      n[o] = nx; n[o + 1] = ny; n[o + 2] = nz; n[o + 3] = nx; n[o + 4] = ny; n[o + 5] = nz; n[o + 6] = nx; n[o + 7] = ny; n[o + 8] = nz;
+    }
     let f = 1;
     if (this.facet) {
       let h = Math.imul(++this.k ^ 0x9e3779b9, 2654435761);
       h ^= h >>> 15;
       f = 1 + (((h >>> 0) & 255) / 255 - 0.5) * this.facet;
     }
-    const r = col[0] * f, g = col[1] * f, b = col[2] * f;
-    this.c.push(r, g, b, r, g, b, r, g, b);
+    this.putCol(o, col[0] * f, col[1] * f, col[2] * f);
+    this.len += 9;
   }
 
   // треугольник с нормалями вершин (гладкое затенение, без разброса яркости граней)
   triN(a, b, c, na, nb, nc, col) {
-    this.p.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
-    this.n.push(na.x, na.y, na.z, nb.x, nb.y, nb.z, nc.x, nc.y, nc.z);
-    this.c.push(col[0], col[1], col[2], col[0], col[1], col[2], col[0], col[1], col[2]);
+    this.grow(9);
+    const o = this.len, p = this.p, n = this.n;
+    p[o] = a.x; p[o + 1] = a.y; p[o + 2] = a.z; p[o + 3] = b.x; p[o + 4] = b.y; p[o + 5] = b.z; p[o + 6] = c.x; p[o + 7] = c.y; p[o + 8] = c.z;
+    n[o] = na.x; n[o + 1] = na.y; n[o + 2] = na.z; n[o + 3] = nb.x; n[o + 4] = nb.y; n[o + 5] = nb.z; n[o + 6] = nc.x; n[o + 7] = nc.y; n[o + 8] = nc.z;
+    this.putCol(o, col[0], col[1], col[2]);
+    this.len += 9;
   }
 
   // четырёхугольник a-b-c-d против часовой стрелки (если смотреть снаружи)
@@ -97,17 +130,17 @@ export class MeshBuilder {
       const hw = w / 2 - ins, hd = d / 2 - ins;
       let pts;
       if (c > 1e-5) {
-        // углы скруглены дугой из пяти точек (через 22,5°)
+        // углы скруглены дугой из семи точек (через 15°)
         const k = Math.max(c * 0.3, c - ins * 0.414);
         pts = [];
         for (const [cx2, cz2, a0] of [[hw - k, -hd + k, -Math.PI / 2], [hw - k, hd - k, 0], [-hw + k, hd - k, Math.PI / 2], [-hw + k, -hd + k, Math.PI]]) {
-          for (let q = 0; q < 5; q++) { const a = a0 + q * Math.PI / 8; pts.push([cx2 + Math.cos(a) * k, cz2 + Math.sin(a) * k]); }
+          for (let q = 0; q < 7; q++) { const a = a0 + q * Math.PI / 12; pts.push([cx2 + Math.cos(a) * k, cz2 + Math.sin(a) * k]); }
         }
       } else pts = [[hw, -hd], [hw, hd], [-hw, hd], [-hw, -hd]];
       return pts.map(([x, z]) => [x * sx, y, z * sz]);
     };
-    // торцы скруглены четвертью окружности: кольца на 0°, 30°, 60° и 90°
-    const arc = [0, 1, 2, 3].map(i => { const a = i * Math.PI / 6; return [1 - Math.sin(a), 1 - Math.cos(a)]; });
+    // торцы скруглены четвертью окружности: кольца через 22,5°
+    const arc = [0, 1, 2, 3, 4].map(i => { const a = i * Math.PI / 8; return [1 - Math.sin(a), 1 - Math.cos(a)]; });
     const ys = bv > 1e-4
       ? [...arc.map(([ins, dy]) => [-h / 2 + bv * dy, bv * ins]), ...arc.slice().reverse().map(([ins, dy]) => [h / 2 - bv * dy, bv * ins])]
       : [[-h / 2, 0], [h / 2, 0]];
@@ -143,9 +176,9 @@ export class MeshBuilder {
   }
 
   // треугольная призма (двускатная крыша) с рядами черепицы
-  prism(x0, y0, z0, x1, y1, z1, col, ridgeX) {
+  prism(x0, y0, z0, x1, y1, z1, col, ridgeX, rows = 16) {
     const s = shade(col, 0.9);
-    const R = 16;
+    const R = rows;
     if (ridgeX) {
       const zm = (z0 + z1) / 2;
       for (let k = 0; k < R; k++) {
@@ -210,14 +243,16 @@ export class MeshBuilder {
 
   build() {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
+    const L = this.len;
+    g.setAttribute('position', new THREE.BufferAttribute(this.p ? this.p.slice(0, L) : new Float32Array(0), 3));
     if (this.flat) {
-      const c = new Uint16Array(this.c.length);
-      for (let i = 0; i < c.length; i++) c[i] = Math.min(65535, Math.round(this.c[i] * 65535));
-      g.setAttribute('color', new THREE.BufferAttribute(c, 3, true));
+      g.setAttribute('color', new THREE.BufferAttribute(this.c ? this.c.slice(0, L) : new Uint16Array(0), 3, true));
+      g.computeBoundingSphere();
+      for (const k in g.attributes) g.attributes[k].onUpload(freeArray);
+      return g;
     } else {
-      g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
-      g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(this.n ? this.n.slice(0, L) : new Float32Array(0), 3));
+      g.setAttribute('color', new THREE.BufferAttribute(this.c ? this.c.slice(0, L) : new Float32Array(0), 3));
     }
     g.computeBoundingSphere();
     return g;

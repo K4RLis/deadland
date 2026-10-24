@@ -17,14 +17,14 @@ export function M(hex, emissive = 0) {
 }
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
-const CYL = new THREE.CylinderGeometry(1, 1, 1, 20);
-const CYL12 = new THREE.CylinderGeometry(1, 1, 1, 28);
-const FRUST = new THREE.CylinderGeometry(0.7, 1, 1, 20);
-const ICO = new THREE.IcosahedronGeometry(1, 2);
-const ICO1 = new THREE.IcosahedronGeometry(1, 3);
-const DODE = new THREE.DodecahedronGeometry(1, 2);
-const CONE = new THREE.ConeGeometry(1, 1, 14);
-const CONE8 = new THREE.ConeGeometry(1, 1, 18);
+const CYL = new THREE.CylinderGeometry(1, 1, 1, 32);
+const CYL12 = new THREE.CylinderGeometry(1, 1, 1, 40);
+const FRUST = new THREE.CylinderGeometry(0.7, 1, 1, 32);
+const ICO = new THREE.IcosahedronGeometry(1, 3);
+const ICO1 = new THREE.IcosahedronGeometry(1, 4);
+const DODE = new THREE.DodecahedronGeometry(1, 3);
+const CONE = new THREE.ConeGeometry(1, 1, 20);
+const CONE8 = new THREE.ConeGeometry(1, 1, 24);
 const PI2 = Math.PI / 2;
 
 export function part(parent, w, h, d, hex, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, geo = BOX, em = 0) {
@@ -244,16 +244,24 @@ function limb(parent, parts, glow = false) {
 
 // переключить персонажа на упрощённую (far) или полную модель
 export function setLod(g, far) {
-  g.traverse(o => { const l = o.userData.lod; if (l) o.geometry = l[far ? 1 : 0]; });
+  g.traverse(o => { const l = o.userData.lod; if (l) { o.geometry = l[far ? 1 : 0]; o.castShadow = !far; } });
 }
 
 const R = (c, more) => more ? { c, ...more } : { c };
 const BLOOD = 0x5a1212, WOUND = 0x8a2420, BONE = 0xd8cfb4, STRAP = 0x2a2622;
 
-// o: skin, shirt, sleeve, pants, shoes, hair, beard, helmet, vest, pack, bare (голые руки), belt,
+// Скелет персонажа (в координатах тела, ступни на y = 0):
+// таз (0.9) → позвоночник (0.94) → голова (1.5) с челюстью, плечи (1.44) → локти → кисти;
+// таз → бёдра (0.82) → колени (0.4). Детали описаны в координатах старой «цельной» модели и сами
+// раскладываются по суставам: что выше колена/локтя/поясницы — на верхний сегмент, ниже — на нижний.
+const PELVIS = 0.9, SPINE = 0.94, HEAD = 1.5, SHOULDER = 1.44, HIP = 0.82, KNEE = 0.42, ELBOW = 0.34, JAW_Y = 0.115, JAW_Z = 0.02;
+const shift = (p, dy, dz = 0) => { const q = p.slice(); q[5] += dy; q[6] += dz; return q; };
+
+// o: skin, shirt, sleeve, pants, shoes, hair, beard, helmet, hardhat, vest, vestKind, pack, greaves, bare (голые руки), belt,
 //    zombie, variant (0..3 — рваная одежда и раны), eyes, eyesGlow, scale, wide
 export function makeHumanoid(o) {
   const g = new THREE.Group();
+  g.rotation.order = 'YXZ'; // поворот по курсу снаружи — падение при смерти идёт вперёд в любую сторону
   const body = new THREE.Group();
   g.add(body);
   const s = o.scale || 1;
@@ -263,10 +271,49 @@ export function makeHumanoid(o) {
   const skin = o.skin, sk2 = dk(skin, 0.9), shirt = o.shirt, pants = o.pants, shoes = o.shoes || 0x2a2420;
   const sleeve = o.sleeve ?? shirt;
 
+  // суставы
+  const hips = new THREE.Group(); hips.position.y = PELVIS; body.add(hips);
+  const spine = new THREE.Group(); spine.position.y = SPINE - PELVIS; hips.add(spine);
+  const head = new THREE.Group(); head.position.y = HEAD - SPINE; spine.add(head);
+  const jaw = new THREE.Group(); jaw.position.set(0, JAW_Y, JAW_Z); head.add(jaw);
+  const legL = new THREE.Group(), legR = new THREE.Group(), kneeL = new THREE.Group(), kneeR = new THREE.Group();
+  legL.position.set(-0.13 * W, HIP - PELVIS, 0); legR.position.set(0.13 * W, HIP - PELVIS, 0);
+  kneeL.position.y = -KNEE; kneeR.position.y = -KNEE;
+  legL.add(kneeL); legR.add(kneeR); hips.add(legL); hips.add(legR);
+  const armL = new THREE.Group(), armR = new THREE.Group(), elbowL = new THREE.Group(), elbowR = new THREE.Group();
+  armL.position.set(-0.36 * W, SHOULDER - SPINE, 0); armR.position.set(0.36 * W, SHOULDER - SPINE, 0);
+  elbowL.position.y = -ELBOW; elbowR.position.y = -ELBOW;
+  armL.add(elbowL); armR.add(elbowR); spine.add(armL); spine.add(armR);
+  const hand = new THREE.Group();
+  hand.position.set(0, -0.62 + ELBOW, -0.02);
+  elbowR.add(hand);
+
+  // раскладка деталей по сегментам
+  const addTorso = parts => {
+    const lo = parts.filter(p => p[5] <= SPINE), hi = parts.filter(p => p[5] > SPINE);
+    if (lo.length) limb(hips, lo.map(p => shift(p, -PELVIS)));
+    if (hi.length) limb(spine, hi.map(p => shift(p, -SPINE)));
+  };
+  const addLeg = (leg, knee, parts) => {
+    const up = parts.filter(p => p[5] > -KNEE + 0.01), dn = parts.filter(p => p[5] <= -KNEE + 0.01);
+    if (up.length) limb(leg, up);
+    if (dn.length) limb(knee, dn.map(p => shift(p, KNEE)));
+  };
+  const addArm = (arm, elbow, parts) => {
+    const up = parts.filter(p => p[5] > -ELBOW), dn = parts.filter(p => p[5] <= -ELBOW);
+    if (up.length) limb(arm, up);
+    if (dn.length) limb(elbow, dn.map(p => shift(p, ELBOW)));
+  };
+  // к челюсти — мелкие детали ниже скул (рот, нижние зубы, борода); крупные (волосы) остаются на черепе
+  const addHead = parts => {
+    const isJaw = p => p[5] < 0.08 && p[1] <= 0.15 && Math.abs(p[4]) < 0.16;
+    const sk = parts.filter(p => !isJaw(p)), jw = parts.filter(isJaw);
+    if (sk.length) limb(head, sk);
+    if (jw.length) limb(jaw, jw.map(p => shift(p, -JAW_Y, -JAW_Z)));
+  };
+
   // ноги: бедро, колено, голень, ботинок со шнуровкой, накладные карманы
-  const legL = new THREE.Group(), legR = new THREE.Group();
-  legL.position.set(-0.13 * W, 0.82, 0); legR.position.set(0.13 * W, 0.82, 0);
-  for (const [l, side] of [[legL, -1], [legR, 1]]) {
+  for (const [l, kn, side] of [[legL, kneeL, -1], [legR, kneeR, 1]]) {
     const torn = zv === 1 && side < 0;
     const L = [
       [0.23 * W, 0.44, 0.26, pants, 0, -0.2, 0, R(0.28, { tx: 1.06, tz: 1.04 })],
@@ -284,9 +331,11 @@ export function makeHumanoid(o) {
       [0.08 * W, 0.012, 0.014, 0xb4aa94, 0, -0.72, -0.107],
     ];
     if (!torn) L.push([0.212 * W, 0.04, 0.24, dk(pants, 0.8), 0, -0.668, 0.008, R(0.3)]);
-    else L.push([0.215 * W, 0.035, 0.245, dk(pants, 0.55), 0, -0.48, 0.0, R(0.3)], [0.06, 0.07, 0.014, WOUND, 0.02, -0.6, -0.116]);
+    else L.push([0.215 * W, 0.035, 0.245, dk(pants, 0.55), 0, -0.48, 0.0, R(0.3)], [0.06, 0.07, 0.014, WOUND, 0.02, -0.6, -0.116],
+      [0.026, 0.15, 0.02, BONE, -0.02, -0.6, -0.114], [0.1 * W, 0.05, 0.014, dk(skin, 0.7), 0, -0.53, -0.112]);
     if (zv === 2) L.push([0.1 * W, 0.15, 0.014, BLOOD, 0.01, -0.13, -0.134]);
     if (zv === 3 && side > 0) L.push([0.11 * W, 0.07, 0.014, dk(skin, 0.85), 0, -0.44, -0.12]);
+    if (o.zombie && !torn) L.push([0.05, 0.08, 0.014, BLOOD, side * 0.04, -0.3, -0.136]);
     if (o.greaves != null) {
       // наколенник, щиток на голени и ремешки
       const gv = o.greaves;
@@ -294,8 +343,7 @@ export function makeHumanoid(o) {
         [0.2 * W, 0.18, 0.04, dk(gv, 0.9), 0, -0.58, -0.113, R(0.3)],
         [0.235 * W, 0.025, 0.27, STRAP, 0, -0.37, 0.002], [0.21 * W, 0.025, 0.232, STRAP, 0, -0.62, 0.004]);
     }
-    limb(l, L);
-    body.add(l);
+    addLeg(l, kn, L);
   }
 
   // туловище: таз, живот, грудь с плечами, шея, воротник
@@ -323,7 +371,7 @@ export function makeHumanoid(o) {
     [0.075, 0.06, 0.02, 0xc8a040, 0, 0.955, -0.155 * W],
     [0.045, 0.03, 0.022, 0x3a2a1e, 0, 0.955, -0.156 * W],
   );
-  else T.push([0.53 * W, 0.045, 0.3 * W, dk(shirt, 0.82), 0, 0.94, 0, R(0.25)]);
+  else T.push([0.53 * W, 0.045, 0.3 * W, dk(shirt, 0.82), 0, 0.96, 0, R(0.25)]);
   if (!o.zombie && o.belt !== false) T.push([0.045, 0.17, 0.055, STRAP, 0.272 * W, 0.86, 0.04, R(0.3)], [0.05, 0.035, 0.06, 0x8a8e92, 0.272 * W, 0.96, 0.04]);
   if (o.vest != null) {
     // разгрузка: жилет, подсумки, рация с антенной, наплечные лямки
@@ -364,30 +412,45 @@ export function makeHumanoid(o) {
     if (zv === 2) T.push([0.22, 0.2, 0.014, BLOOD, 0.07, 1.32, fz - 0.006], [0.04, 0.16, 0.014, BLOOD, 0.14, 1.16, fz - 0.002], [0.03, 0.1, 0.014, BLOOD, 0.02, 1.17, fz - 0.002]);
     if (zv === 3) T.push([0.3 * W, 0.1, 0.016, skin, 0, 1.0, fz + 0.004], [0.08, 0.05, 0.018, WOUND, -0.06, 1.0, fz + 0.003],
       [0.07, 0.06, 0.016, dk(shirt, 0.7), -0.16 * W, 1.03, fz + 0.002], [0.06, 0.05, 0.016, dk(shirt, 0.7), 0.15 * W, 1.03, fz + 0.002]);
+    // ключицы и жилы на шее
+    T.push([0.1, 0.018, 0.02, dk(skin, 0.82), -0.07, 1.47, -0.07], [0.1, 0.018, 0.02, dk(skin, 0.82), 0.07, 1.47, -0.07],
+      [0.018, 0.06, 0.02, dk(skin, 0.8), -0.04, 1.51, -0.07], [0.018, 0.06, 0.02, dk(skin, 0.8), 0.04, 1.51, -0.07]);
   }
-  limb(body, T);
+  addTorso(T);
+  if (o.zombie && o.vest == null) {
+    // рваный подол рубашки: лоскуты разной длины спереди и сзади, качаются вместе с корпусом
+    const strips = [];
+    [[-0.19, 0.09], [-0.07, 0.13], [0.06, 0.07], [0.18, 0.11]].forEach(([x, len], i) => {
+      strips.push([0.07, len, 0.016, dk(shirt, 0.9), x * W, 0.97 - len / 2, fz + 0.004, R(0.2)]);
+      strips.push([0.08, len * 0.8, 0.016, dk(shirt, 0.85), (x + 0.03) * W, 0.97 - len * 0.4, bz - 0.004 + (i & 1) * 0.002, R(0.2)]);
+    });
+    limb(spine, strips.map(p => shift(p, -SPINE)));
+  }
 
   // голова: череп, челюсть, нос, уши, брови, глаза, рот, причёска / шлем
-  const head = new THREE.Group();
-  head.position.set(0, 1.5, 0);
-  body.add(head);
   const hb = [
     [0.33, 0.25, 0.33, skin, 0, 0.225, 0, R(0.32, { b: 0.18 })],
     [0.29, 0.12, 0.29, skin, 0, 0.07, -0.01, R(0.32, { b: 0.2, tx: 1.12, tz: 1.1 })],
-    [0.045, 0.075, 0.05, sk2, 0, 0.15, -0.184, R(0.3, { tx: 0.7, tz: 0.8 })],
-    [0.04, 0.085, 0.065, sk2, -0.168, 0.18, 0.01, R(0.3)], [0.04, 0.085, 0.065, sk2, 0.168, 0.18, 0.01, R(0.3)],
+    [0.04, 0.085, 0.065, sk2, -0.168, 0.18, 0.01, R(0.3)],
     [0.085, 0.022, 0.03, o.hair ?? dk(skin, 0.6), -0.075, 0.25, -0.165], [0.085, 0.022, 0.03, o.hair ?? dk(skin, 0.6), 0.075, 0.25, -0.165],
   ];
+  if (!(o.zombie && zv === 1)) hb.push([0.04, 0.085, 0.065, sk2, 0.168, 0.18, 0.01, R(0.3)]);
+  else hb.push([0.03, 0.04, 0.05, WOUND, 0.166, 0.17, 0.01]);
+  // нос: у одного варианта зомби вместо носа тёмная впадина
+  if (o.zombie && zv === 3) hb.push([0.042, 0.05, 0.012, 0x2a0a0a, 0, 0.152, -0.168]);
+  else hb.push([0.045, 0.075, 0.05, sk2, 0, 0.15, -0.184, R(0.3, { tx: 0.7, tz: 0.8 })]);
   const eye = o.eyes || 0x2a2a2a;
   const glowEyes = [];
   if (o.zombie) {
     hb.push(
       [0.085, 0.06, 0.014, dk(skin, 0.45), -0.075, 0.205, -0.166], [0.085, 0.06, 0.014, dk(skin, 0.45), 0.075, 0.205, -0.166],
+      [0.3, 0.032, 0.05, dk(skin, 0.86), 0, 0.247, -0.15, R(0.4)],
+      [0.055, 0.05, 0.012, dk(skin, 0.7), -0.11, 0.128, -0.158], [0.055, 0.05, 0.012, dk(skin, 0.7), 0.11, 0.128, -0.158],
       [0.13, 0.05, 0.014, 0x2a0808, 0, 0.068, -0.165],
       [0.11, 0.014, 0.012, 0xcfc6a6, 0, 0.087, -0.17], [0.09, 0.012, 0.012, 0xcfc6a6, 0, 0.05, -0.168],
     );
     if (zv === 0) hb.push([0.07, 0.05, 0.014, WOUND, 0.08, 0.29, -0.163]);
-    if (zv === 2) hb.push([0.012, 0.09, 0.07, WOUND, 0.165, 0.24, -0.04]);
+    if (zv === 2) hb.push([0.012, 0.09, 0.07, WOUND, 0.165, 0.24, -0.04], [0.04, 0.03, 0.012, BLOOD, -0.06, 0.03, -0.155]);
     const pupils = [[0.04, 0.035, 0.01, eye, -0.075, 0.205, -0.175], [0.04, 0.035, 0.01, eye, 0.075, 0.205, -0.175]];
     if (o.eyesGlow) glowEyes.push(...pupils); else hb.push(...pupils);
   } else {
@@ -406,6 +469,8 @@ export function makeHumanoid(o) {
       [0.3, 0.05, 0.05, hr, 0.025, 0.322, -0.152, R(0.3, { rz: 0.08 })],
     );
     if (o.beard) hb.push([0.29, 0.085, 0.05, hr, 0, 0.055, -0.15, R(0.35)], [0.1, 0.022, 0.02, hr, 0, 0.1, -0.174]);
+    // у зомби волосы клочьями: проплешины
+    if (o.zombie) hb.push([0.12, 0.014, 0.1, dk(skin, 0.92), 0.06, 0.402, -0.02, R(0.3)], [0.08, 0.014, 0.07, dk(skin, 0.88), -0.09, 0.398, 0.08, R(0.3)]);
   }
   if (o.helmet != null) {
     const hm = o.helmet;
@@ -425,12 +490,10 @@ export function makeHumanoid(o) {
     );
   }
   if (glowEyes.length) limb(head, glowEyes, true);
-  limb(head, hb);
+  addHead(hb);
 
-  // руки: плечо, плечевая часть, локоть, предплечье, манжета, ладонь, пальцы, большой палец
-  const armL = new THREE.Group(), armR = new THREE.Group();
-  armL.position.set(-0.36 * W, 1.44, 0); armR.position.set(0.36 * W, 1.44, 0);
-  for (const [a, side] of [[armL, -1], [armR, 1]]) {
+  // руки: плечо, плечевая часть, локоть, предплечье, манжета, ладонь, четыре пальца, большой палец
+  for (const [a, el, side] of [[armL, elbowL, -1], [armR, elbowR, 1]]) {
     const torn = zv === 0 && side > 0;
     const up = o.bare ? skin : sleeve, fore = o.bare || torn ? skin : sleeve;
     const A = [
@@ -439,54 +502,143 @@ export function makeHumanoid(o) {
       [0.155, 0.08, 0.17, o.bare ? skin : dk(sleeve, 0.88), 0, -0.355, 0, R(0.32)],
       [0.15, 0.17, 0.16, fore, 0, -0.45, 0, R(0.28, { tx: 1.06, tz: 1.05 })],
       [0.125, 0.1, 0.14, skin, 0, -0.6, 0, R(0.28)],
-      [0.118, 0.07, 0.128, sk2, 0, -0.675, 0.006, R(0.35)],
       [0.045, 0.085, 0.05, skin, -side * 0.02, -0.61, -0.08, R(0.35)],
     ];
+    // пальцы: у зомби длиннее и скрючены, с тёмными ногтями
+    const fl = o.zombie ? 0.1 : 0.075;
+    for (let f = 0; f < 4; f++) {
+      const x = (f - 1.5) * 0.029;
+      A.push([0.027, fl, 0.03, sk2, x, -0.65 - fl / 2, -0.012 - (o.zombie ? 0.012 : 0), R(0.35, { rx: o.zombie ? 0.45 : 0.2 })]);
+      if (o.zombie) A.push([0.022, 0.016, 0.018, dk(skin, 0.45), x, -0.65 - fl + 0.004, -0.05]);
+    }
     if (!o.bare && !torn) A.push([0.165, 0.045, 0.175, dk(sleeve, 0.72), 0, -0.535, 0, R(0.3)]);
     if (o.bare) A.push([0.07, 0.03, 0.2, shirt, -side * 0.03, 0.04, 0, R(0.3)]);
     if (torn) A.push([0.17, 0.035, 0.185, dk(sleeve, 0.6), 0, -0.375, 0, R(0.3)], [0.05, 0.08, 0.012, WOUND, 0, -0.46, -0.083]);
-    if (o.zombie) A.push([0.12, 0.02, 0.13, dk(skin, 0.55), 0, -0.705, 0.006]);
+    if (o.zombie && (o.bare || torn)) A.push([0.012, 0.12, 0.012, dk(skin, 0.72), side * 0.04, -0.47, -0.08], [0.012, 0.09, 0.012, dk(skin, 0.72), -side * 0.02, -0.44, -0.081]);
     if (zv === 2 && side < 0) A.push([0.012, 0.12, 0.07, BLOOD, -0.078, -0.44, 0]);
     if (!o.zombie && side < 0) A.push([0.012, 0.07, 0.09, o.patch ?? 0x3a6ab0, -0.096, -0.1, 0]);
-    limb(a, A);
-    body.add(a);
+    addArm(a, el, A);
   }
-  const hand = new THREE.Group();
-  hand.position.set(0, -0.62, -0.02);
-  armR.add(hand);
-  g.userData = { body, head, legL, legR, armL, armR, hand, phase: Math.random() * 6, zombie: !!o.zombie, W, zv };
+
+  g.userData = {
+    body, hips, spine, head, jaw, legL, legR, kneeL, kneeR, armL, armR, elbowL, elbowR, hand,
+    phase: Math.random() * 6, zombie: !!o.zombie, W, zv, kind: o.kind || 'walker',
+    // характер походки зомби: хромая нога, одна безвольная рука, наклон головы
+    limp: o.zombie ? [-1, 0, 1, 0][Math.floor(Math.random() * 4)] : 0,
+    hang: o.zombie && Math.random() < 0.3 ? (Math.random() < 0.5 ? -1 : 1) : 0,
+    tilt: o.zombie ? (Math.random() - 0.5) * 0.5 : 0,
+    seed: Math.random() * 6,
+    addTorso, addHead, addArm,
+  };
   return g;
 }
 
-// поза: speed — скорость движения, aim — оружие в руках, atk — фаза атаки 0..1
+// ---------- анимация ----------
+const lerp = (a, b, t) => a + (b - a) * t;
+const sstep = t => t * t * (3 - 2 * t);
+
+// поза: speed — скорость движения; opts: aim, pitch, swing, crouch (игроки); atk — фаза атаки 0..1 (−1 — нет), hit — вздрагивание 0..1 (зомби)
 export function animate(g, dt, speed, opts = {}) {
   const u = g.userData;
-  u.phase += dt * (2 + speed * 2.2);
-  const sw = Math.min(1, speed / 3) * 0.7;
-  const s = Math.sin(u.phase);
-  u.legL.rotation.x = s * sw;
-  u.legR.rotation.x = -s * sw;
-  if (u.zombie) {
-    const atk = opts.atk || 0;
-    const base = 1.35 + Math.sin(u.phase * 0.5) * 0.08;
-    u.armL.rotation.x = base - atk * 1.6;
-    u.armR.rotation.x = base - atk * 1.6 + Math.sin(u.phase * 0.7) * 0.1;
-    u.armL.rotation.z = 0.08; u.armR.rotation.z = -0.08;
-    u.body.rotation.x = -0.12;
-    u.head.rotation.z = Math.sin(u.phase * 0.4) * 0.15;
-  } else if (opts.aim) {
-    u.armR.rotation.x = 1.45 + (opts.pitch || 0);
-    u.armL.rotation.x = 1.35 + (opts.pitch || 0);
-    u.armL.rotation.y = -0.5;
-    u.head.rotation.x = (opts.pitch || 0) * 0.6;
-  } else {
-    u.armL.rotation.x = -s * sw * 0.8;
-    u.armR.rotation.x = s * sw * 0.8 + (opts.swing || 0) * 1.8;
-    u.armL.rotation.y = 0;
-    u.head.rotation.x = (opts.pitch || 0) * 0.6;
+  if (u.zombie) zombiePose(u, dt, speed, opts); else playerPose(u, dt, speed, opts);
+}
+
+function legsCycle(u, p, amp, knee, kneeBase, limp, extra = 0) {
+  for (const [leg, kn, ph, side] of [[u.legL, u.kneeL, p, -1], [u.legR, u.kneeR, p + Math.PI, 1]]) {
+    const drag = limp === side ? 0.5 : 1;
+    leg.rotation.x = Math.sin(ph) * amp * drag + extra;
+    kn.rotation.x = -Math.max(0, Math.cos(ph)) * knee * drag - kneeBase;
   }
-  if (opts.crouch) { u.body.position.y = -0.35; u.legL.rotation.x += 0.9; u.legR.rotation.x += 0.9; }
-  else u.body.position.y = 0;
+}
+
+function playerPose(u, dt, speed, o) {
+  const st = Math.min(1, speed / 4.3), run = Math.max(0, Math.min(1, (speed - 4.5) / 2.5));
+  u.phase += dt * (speed > 0.3 ? 2.4 + speed * 1.5 : 1.0);
+  const p = u.phase, s = Math.sin(p);
+  legsCycle(u, p, 0.5 * st + 0.3 * run, 0.85 * st + 0.6 * run, 0.04, 0);
+  u.legL.rotation.z = 0; u.legR.rotation.z = 0;
+  u.hips.position.y = PELVIS - Math.abs(s) * 0.025 * st;
+  u.hips.rotation.set(0, s * 0.08 * st, 0);
+  u.spine.rotation.set(-(0.04 * st + 0.18 * run), -s * 0.1 * st, 0);
+  u.jaw.rotation.x = 0;
+  const pitch = o.pitch || 0;
+  if (o.aim) {
+    u.armR.rotation.set(1.45 + pitch - u.spine.rotation.x, 0, 0); u.elbowR.rotation.x = 0.15;
+    u.armL.rotation.set(1.3 + pitch - u.spine.rotation.x, -0.5, 0); u.elbowL.rotation.x = 0.45;
+  } else {
+    u.armL.rotation.set(-s * 0.5 * st, 0, 0.04);
+    u.armR.rotation.set(s * 0.5 * st + (o.swing || 0) * 1.8, 0, -0.04);
+    u.elbowL.rotation.x = 0.12 + 0.3 * st + 0.9 * run;
+    u.elbowR.rotation.x = 0.12 + 0.3 * st + 0.9 * run + (o.swing || 0) * 0.4;
+  }
+  u.head.rotation.set(pitch * 0.6 - u.spine.rotation.x, 0, 0);
+  if (o.crouch) {
+    // присед: таз ниже, бёдра вперёд, колени согнуты — ступни остаются на земле
+    u.hips.position.y -= 0.32;
+    u.legL.rotation.x += 1.1; u.legR.rotation.x += 1.1;
+    u.kneeL.rotation.x -= 1.75; u.kneeR.rotation.x -= 1.75;
+    u.spine.rotation.x -= 0.25; u.head.rotation.x += 0.25;
+  }
+}
+
+function zombiePose(u, dt, speed, o) {
+  const K = u.kind, runner = K === 'runner' || K === 'leaper', heavy = K === 'tank' || K === 'butcher';
+  const st = Math.min(1, speed / (runner ? 4.5 : 2.2));
+  const fast = runner && speed > 2.5;
+  u.phase += dt * (fast ? 3.2 + speed * 1.15 : heavy ? 1.1 + speed * 1.5 : 1.3 + speed * 1.8);
+  const p = u.phase, s = Math.sin(p), t = performance.now() / 1000 + u.seed;
+  // ноги: шаркающий шаг, одна нога волочится; у прыгуна — полуприсед
+  const crouch = K === 'leaper' ? 1 : 0;
+  legsCycle(u, p, (fast ? 0.8 : heavy ? 0.32 : 0.42) * st, (fast ? 1.4 : 0.6) * st, 0.1 + crouch * 0.9, u.limp, crouch * 0.45);
+  u.legL.rotation.z = -(heavy ? 0.07 : 0.025); u.legR.rotation.z = heavy ? 0.07 : 0.025;
+  // таз: проседает на шаге, валко раскачивается
+  u.hips.position.y = PELVIS - Math.abs(s) * (fast ? 0.045 : 0.03) * st - crouch * 0.12 - (u.limp ? Math.max(0, Math.sin(p * 2)) * 0.015 * st : 0);
+  u.hips.rotation.set(0, s * 0.1 * st, s * (heavy ? 0.1 : 0.06) * (0.3 + st));
+  // спина: сутулость, раскачивание; голова смотрит вперёд, но болтается и заваливается набок
+  const lean = (fast ? 0.45 : 0.24) + (heavy ? -0.04 : 0) + crouch * 0.4;
+  u.spine.rotation.set(-(lean + Math.sin(p * 2) * 0.03 + Math.sin(t * 0.7) * 0.03 * (1 - st)), -s * 0.12 * st, -s * 0.08 * (0.4 + st) + u.tilt * 0.3);
+  u.head.rotation.set(lean * 0.7 + Math.sin(t * 1.1) * 0.07, Math.sin(t * 0.4) * 0.22, u.tilt + Math.sin(t * 0.55) * 0.16);
+  u.jaw.rotation.x = -(0.1 + Math.max(0, Math.sin(t * 2.3)) * 0.3);
+  // руки
+  let sL, sR, eL, eR, zL = 0.12, zR = -0.12;
+  if (fast) { sL = 0.35 - s * 1.0; sR = 0.35 + s * 1.0; eL = eR = 1.15; zL = 0.25; zR = -0.25; }
+  else if (heavy) { sL = 0.3 + Math.sin(p + 1) * 0.25 * st; sR = 0.3 + Math.sin(p + 1 + Math.PI) * 0.25 * st; eL = eR = 0.3; zL = 0.18; zR = -0.18; }
+  else if (crouch) { sL = 0.9 + Math.sin(t * 1.3) * 0.08; sR = 0.95 + Math.sin(t * 1.1) * 0.08; eL = eR = 0.85; }
+  else { sL = 1.15 + Math.sin(p + 0.5) * 0.12 + Math.sin(t * 0.9) * 0.05; sR = 1.05 + Math.sin(p + 2.2) * 0.12; eL = 0.38; eR = 0.5; }
+  // безвольно висящая рука
+  if (u.hang === -1 && !fast) { sL = 0.12 + s * 0.22 * st; eL = 0.12; zL = 0.04; }
+  if (u.hang === 1 && !fast) { sR = 0.12 - s * 0.22 * st; eR = 0.12; zR = -0.04; }
+  // атака: замах обеими руками, рывок корпусом и удар вниз с раскрытой пастью
+  const a = o.atk;
+  if (a != null && a >= 0) {
+    let up, k;
+    if (a < 0.45) { k = sstep(a / 0.45); up = 1; } else if (a < 0.62) { k = 1; up = 1 - sstep((a - 0.45) / 0.17); } else { k = 1 - sstep((a - 0.62) / 0.38); up = 0; }
+    const sh = lerp(0.75, 2.3, up), el = lerp(0.15, 1.0, up);
+    sL = lerp(sL, sh, k); sR = lerp(sR, sh + 0.08, k); eL = lerp(eL, el, k); eR = lerp(eR, el, k);
+    zL = lerp(zL, 0.18, k); zR = lerp(zR, -0.18, k);
+    u.spine.rotation.x += k * (up > 0.5 ? 0.12 : -0.42);
+    u.head.rotation.x += k * (up > 0.5 ? -0.05 : 0.3);
+    u.jaw.rotation.x = lerp(u.jaw.rotation.x, -0.6, k);
+  }
+  // попадание: корпус и голову отбрасывает назад
+  const h = o.hit || 0;
+  if (h > 0) { u.spine.rotation.x += 0.45 * h; u.head.rotation.x += 0.5 * h; sL -= 0.5 * h; sR -= 0.5 * h; }
+  u.armL.rotation.set(sL, 0, zL); u.armR.rotation.set(sR, 0, zR);
+  u.elbowL.rotation.x = eL; u.elbowR.rotation.x = eR;
+}
+
+// смерть: ноги подкашиваются, корпус оседает, и тело падает лицом вперёд
+export function animateDeath(g, t) {
+  const u = g.userData;
+  const k = sstep(Math.min(1, t / 0.45));
+  u.kneeL.rotation.x = -1.5 * k; u.kneeR.rotation.x = -1.3 * k;
+  u.legL.rotation.x = 0.85 * k; u.legR.rotation.x = 0.7 * k;
+  u.hips.position.y = PELVIS - 0.32 * k;
+  u.spine.rotation.x = -0.55 * k; u.head.rotation.x = -0.4 * k;
+  u.armL.rotation.set(lerp(u.armL.rotation.x, 0.25, k), 0, 0.15); u.armR.rotation.set(lerp(u.armR.rotation.x, 0.4, k), 0, -0.15);
+  u.elbowL.rotation.x = 0.2; u.elbowR.rotation.x = 0.3;
+  u.jaw.rotation.x = -0.45;
+  g.rotation.x = -Math.min(1.42, Math.max(0, t - 0.3) * 4.2);
 }
 
 export const PLAYER_COLORS = [0x3b6fb6, 0xc0392b, 0x2f8f4e, 0xd68910, 0x8e44ad, 0x17a2b8, 0xe0e0e0, 0x333333, 0xc76f9a, 0x7a5a3a];
@@ -525,37 +677,37 @@ const WALKERS = [
 const rnd = n => Math.floor(Math.random() * n);
 
 export const ZOMBIE_LOOK = {
-  walker: () => { const i = rnd(WALKERS.length); return makeHumanoid({ zombie: true, ...WALKERS[i], variant: i % 4, eyes: 0xff3020, eyesGlow: true }); },
-  runner: () => makeHumanoid({ zombie: true, skin: 0xa0b090, shirt: 0x6a2a2a, pants: 0x2a2a30, hair: null, bare: true, belt: false, variant: rnd(2) * 2, eyes: 0xffd020, eyesGlow: true, scale: 0.95 }),
-  tank: () => zExtras(makeHumanoid({ zombie: true, skin: 0x6a8a5a, shirt: 0x4a4038, pants: 0x30302a, hair: null, belt: false, variant: 3, eyes: 0xff3020, eyesGlow: true, scale: 1.35, wide: 1.4 }), 'tank'),
-  soldier: () => makeHumanoid({ zombie: true, skin: 0x7a9070, shirt: 0x55603e, sleeve: 0x4a5536, pants: 0x4a5536, shoes: 0x2a2620, helmet: 0x3e4a2e, vest: 0x5a6440, variant: rnd(4), eyes: 0xff3020, eyesGlow: true }),
+  walker: () => { const i = rnd(WALKERS.length); return makeHumanoid({ zombie: true, kind: 'walker', ...WALKERS[i], variant: i % 4, eyes: 0xff3020, eyesGlow: true }); },
+  runner: () => makeHumanoid({ zombie: true, kind: 'runner', skin: 0xa0b090, shirt: 0x6a2a2a, pants: 0x2a2a30, hair: null, bare: true, belt: false, variant: rnd(2) * 2, eyes: 0xffd020, eyesGlow: true, scale: 0.95 }),
+  tank: () => zExtras(makeHumanoid({ zombie: true, kind: 'tank', skin: 0x6a8a5a, shirt: 0x4a4038, pants: 0x30302a, hair: null, belt: false, variant: 3, eyes: 0xff3020, eyesGlow: true, scale: 1.35, wide: 1.4 }), 'tank'),
+  soldier: () => makeHumanoid({ zombie: true, kind: 'soldier', skin: 0x7a9070, shirt: 0x55603e, sleeve: 0x4a5536, pants: 0x4a5536, shoes: 0x2a2620, helmet: 0x3e4a2e, vest: 0x5a6440, variant: rnd(4), eyes: 0xff3020, eyesGlow: true }),
   // боссы
-  butcher: () => zExtras(makeHumanoid({ zombie: true, skin: 0x8a6a5a, shirt: 0xd8d0c0, sleeve: 0x8a6a5a, pants: 0x3a3028, hair: null, variant: 2, eyes: 0xffe020, eyesGlow: true, scale: 2.1, wide: 1.5 }), 'butcher'),
-  screamer: () => zExtras(makeHumanoid({ zombie: true, skin: 0xc8c8b0, shirt: 0x4a2a5a, pants: 0x2a1a30, hair: 0xe0e0e0, belt: false, variant: 1, eyes: 0x60ff60, eyesGlow: true, scale: 1.6 }), 'screamer'),
-  leaper: () => zExtras(makeHumanoid({ zombie: true, skin: 0x6a8a4a, shirt: 0x3a4a2a, pants: 0x2a3a20, hair: null, bare: true, variant: 0, eyes: 0xff3020, eyesGlow: true, scale: 1.75 }), 'leaper'),
+  butcher: () => zExtras(makeHumanoid({ zombie: true, kind: 'butcher', skin: 0x8a6a5a, shirt: 0xd8d0c0, sleeve: 0x8a6a5a, pants: 0x3a3028, hair: null, variant: 2, eyes: 0xffe020, eyesGlow: true, scale: 2.1, wide: 1.5 }), 'butcher'),
+  screamer: () => zExtras(makeHumanoid({ zombie: true, kind: 'screamer', skin: 0xc8c8b0, shirt: 0x4a2a5a, pants: 0x2a1a30, hair: 0xe0e0e0, belt: false, variant: 1, eyes: 0x60ff60, eyesGlow: true, scale: 1.6 }), 'screamer'),
+  leaper: () => zExtras(makeHumanoid({ zombie: true, kind: 'leaper', skin: 0x6a8a4a, shirt: 0x3a4a2a, pants: 0x2a3a20, hair: null, bare: true, variant: 0, eyes: 0xff3020, eyesGlow: true, scale: 1.75 }), 'leaper'),
 };
 
 // особые детали: брюхо и опухоли танка, фартук и тесак мясника, волосы и платье крикуньи, шипы и когти прыгуна
 function zExtras(g, kind) {
   const u = g.userData, W = u.W;
   const claws = (hex, n, len) => {
-    for (const a of [u.armL, u.armR]) {
+    for (const [a, el] of [[u.armL, u.elbowL], [u.armR, u.elbowR]]) {
       const C = [];
-      for (let i = 0; i < n; i++) C.push([0.022, len, 0.03, hex, (i - (n - 1) / 2) * 0.04, -0.71 - len * 0.4, -0.02, R(0.3, { tx: 0.15, tz: 0.15, rx: Math.PI - 0.35 })]);
-      limb(a, C);
+      for (let i = 0; i < n; i++) C.push([0.022, len, 0.03, hex, (i - (n - 1) / 2) * 0.04, -0.71 - len * 0.4, -0.04, R(0.3, { tx: 0.15, tz: 0.15, rx: Math.PI - 0.5 })]);
+      u.addArm(a, el, C);
     }
   };
   if (kind === 'tank') {
-    limb(u.body, [
+    u.addTorso([
       [0.4 * W, 0.3, 0.12, dk(0x6a8a5a, 0.95), 0, 1.05, -0.17 * W, R(0.45, { b: 0.4 })],
       [0.06, 0.05, 0.03, WOUND, 0.08, 1.0, -0.235 * W],
       [0.14, 0.12, 0.1, 0x8aa070, 0.2 * W, 1.42, -0.06, R(0.45, { b: 0.45 })],
       [0.1, 0.09, 0.08, 0x8aa070, -0.12 * W, 1.18, 0.16 * W, R(0.45, { b: 0.45 })],
       [0.16 * W, 0.4, 0.02, STRAP, 0.12 * W, 1.2, -0.158 * W],
     ]);
-    limb(u.head, [[0.12, 0.09, 0.1, 0x8aa070, 0.08, 0.34, 0.06, R(0.45, { b: 0.45 })]]);
+    u.addHead([[0.12, 0.09, 0.1, 0x8aa070, 0.08, 0.34, 0.06, R(0.45, { b: 0.45 })]]);
   } else if (kind === 'butcher') {
-    limb(u.body, [
+    u.addTorso([
       [0.48 * W, 0.66, 0.03, 0xcfc6b4, 0, 1.08, -0.162 * W, R(0.1)],
       [0.26 * W, 0.24, 0.034, 0x7a1616, 0.05, 1.0, -0.163 * W],
       [0.14 * W, 0.16, 0.034, 0x8a1c1c, -0.1, 1.28, -0.163 * W],
@@ -565,7 +717,7 @@ function zExtras(g, kind) {
       [0.016, 0.1, 0.016, 0x9aa0a6, -0.24 * W, 0.86, -0.08], [0.05, 0.016, 0.016, 0x9aa0a6, -0.228 * W, 0.81, -0.08],
       [0.016, 0.1, 0.016, 0x9aa0a6, -0.26 * W, 0.86, 0.02], [0.05, 0.016, 0.016, 0x9aa0a6, -0.248 * W, 0.81, 0.02],
     ]);
-    limb(u.head, [[0.02, 0.012, 0.3, 0x3a1414, 0.04, 0.352, 0], [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, -0.1],
+    u.addHead([[0.02, 0.012, 0.3, 0x3a1414, 0.04, 0.352, 0], [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, -0.1],
       [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, -0.03], [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, 0.04], [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, 0.11]]);
     limb(u.hand, [
       [0.05, 0.2, 0.05, 0x3a2a1e, 0, -0.1, 0, R(0.35)],
@@ -578,7 +730,7 @@ function zExtras(g, kind) {
     ]);
   } else if (kind === 'screamer') {
     const hw = 0xe0e0d8, hw2 = 0xd0d0c8;
-    limb(u.head, [
+    u.addHead([
       [0.39, 0.52, 0.1, hw, 0, 0.08, 0.17, R(0.3)],
       [0.06, 0.44, 0.09, hw, -0.18, 0.1, 0.03, R(0.3)], [0.06, 0.44, 0.09, hw2, 0.18, 0.1, 0.03, R(0.3)],
       [0.05, 0.3, 0.03, hw2, -0.11, 0.16, -0.18, R(0.3)], [0.04, 0.24, 0.03, hw, 0.12, 0.19, -0.18, R(0.3)],
@@ -587,14 +739,14 @@ function zExtras(g, kind) {
     ]);
     const S = [[0.54, 0.46, 0.34, 0x3a1e48, 0, 0.62, 0, R(0.25, { tx: 0.85, tz: 0.85 })]];
     for (const x of [-0.2, -0.07, 0.07, 0.2]) S.push([0.07, 0.12, 0.02, 0x2e1838, x, 0.36, -0.165], [0.07, 0.1, 0.02, 0x2e1838, x + 0.03, 0.37, 0.165]);
-    limb(u.body, S);
+    u.addTorso(S);
     claws(0xd8d0b8, 3, 0.11);
   } else {
     const sp = [];
     for (let i = 0; i < 6; i++) sp.push([0.07 - i * 0.005, 0.2, 0.07, BONE, 0, 1.48 - i * 0.11, 0.2 * W, R(0.3, { tx: 0.08, tz: 0.08, rx: 0.9 })]);
-    limb(u.body, sp);
-    for (const a of [u.armL, u.armR]) limb(a, [[0.05, 0.14, 0.05, BONE, 0, -0.33, 0.12, R(0.3, { tx: 0.1, tz: 0.1, rx: 1.4 })]]);
-    limb(u.head, [
+    u.addTorso(sp);
+    for (const [a, el] of [[u.armL, u.elbowL], [u.armR, u.elbowR]]) u.addArm(a, el, [[0.05, 0.14, 0.05, BONE, 0, -0.33, 0.12, R(0.3, { tx: 0.1, tz: 0.1, rx: 1.4 })]]);
+    u.addHead([
       [0.22, 0.09, 0.12, dk(0x6a8a4a, 0.9), 0, 0.06, -0.19, R(0.3)],
       [0.025, 0.06, 0.025, BONE, -0.06, 0.0, -0.235, R(0.3, { tx: 0.1, tz: 0.1, rx: Math.PI })],
       [0.025, 0.06, 0.025, BONE, 0.06, 0.0, -0.235, R(0.3, { tx: 0.1, tz: 0.1, rx: Math.PI })],
