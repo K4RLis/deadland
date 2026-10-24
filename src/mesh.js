@@ -90,19 +90,19 @@ export class MeshBuilder {
       const hw = w / 2 - ins, hd = d / 2 - ins;
       let pts;
       if (c > 1e-5) {
-        // углы скруглены дугой из трёх точек (0°, 45°, 90°)
+        // углы скруглены дугой из пяти точек (через 22,5°)
         const k = Math.max(c * 0.3, c - ins * 0.414);
         pts = [];
         for (const [cx2, cz2, a0] of [[hw - k, -hd + k, -Math.PI / 2], [hw - k, hd - k, 0], [-hw + k, hd - k, Math.PI / 2], [-hw + k, -hd + k, Math.PI]]) {
-          for (let q = 0; q < 3; q++) { const a = a0 + q * Math.PI / 4; pts.push([cx2 + Math.cos(a) * k, cz2 + Math.sin(a) * k]); }
+          for (let q = 0; q < 5; q++) { const a = a0 + q * Math.PI / 8; pts.push([cx2 + Math.cos(a) * k, cz2 + Math.sin(a) * k]); }
         }
       } else pts = [[hw, -hd], [hw, hd], [-hw, hd], [-hw, -hd]];
       return pts.map(([x, z]) => [x * sx, y, z * sz]);
     };
-    // торцы скруглены четвертью окружности: кольца на 0°, 45° и 90°
-    const q = 1 - Math.SQRT1_2;
+    // торцы скруглены четвертью окружности: кольца на 0°, 30°, 60° и 90°
+    const arc = [0, 1, 2, 3].map(i => { const a = i * Math.PI / 6; return [1 - Math.sin(a), 1 - Math.cos(a)]; });
     const ys = bv > 1e-4
-      ? [[-h / 2, bv], [-h / 2 + bv * q, bv * q], [-h / 2 + bv, 0], [h / 2 - bv, 0], [h / 2 - bv * q, bv * q], [h / 2, bv]]
+      ? [...arc.map(([ins, dy]) => [-h / 2 + bv * dy, bv * ins]), ...arc.slice().reverse().map(([ins, dy]) => [h / 2 - bv * dy, bv * ins])]
       : [[-h / 2, 0], [h / 2, 0]];
     let rot = null;
     if (o.rx || o.ry || o.rz) { _re.set(o.rx || 0, o.ry || 0, o.rz || 0); rot = _rm.makeRotationFromEuler(_re); }
@@ -138,7 +138,7 @@ export class MeshBuilder {
   // треугольная призма (двускатная крыша) с рядами черепицы
   prism(x0, y0, z0, x1, y1, z1, col, ridgeX) {
     const s = shade(col, 0.9);
-    const R = 10;
+    const R = 16;
     if (ridgeX) {
       const zm = (z0 + z1) / 2;
       for (let k = 0; k < R; k++) {
@@ -249,12 +249,12 @@ export function addSurfaceDetail(material, scale = 3, amp = 0.09) {
 
 // Общие неиндексированные примитивы
 export const PRIM = {
-  cone6: new THREE.ConeGeometry(1, 1, 9, 2).toNonIndexed(),
+  cone6: new THREE.ConeGeometry(1, 1, 14, 3).toNonIndexed(),
   cone5: new THREE.ConeGeometry(1, 1, 5, 1).toNonIndexed(),
   cyl5: new THREE.CylinderGeometry(1, 1, 1, 5, 1).toNonIndexed(),
   cyl6: new THREE.CylinderGeometry(1, 1, 1, 6, 1).toNonIndexed(),
-  cyl8: new THREE.CylinderGeometry(1, 1, 1, 12, 2).toNonIndexed(),
-  ico: new THREE.IcosahedronGeometry(1, 1),
+  cyl8: new THREE.CylinderGeometry(1, 1, 1, 18, 3).toNonIndexed(),
+  ico: new THREE.IcosahedronGeometry(1, 2),
   dodeca: new THREE.DodecahedronGeometry(1, 0),
   box: new THREE.BoxGeometry(1, 1, 1).toNonIndexed(),
 };

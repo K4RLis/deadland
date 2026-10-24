@@ -24,11 +24,11 @@ function jittered(geo, amt, seed) {
 }
 
 const GEO = {
-  rocks: [0, 1, 2, 3].map(s => jittered(new THREE.IcosahedronGeometry(1, 3), 0.4, 100 + s)),
-  crowns: [0, 1, 2].map(s => jittered(new THREE.IcosahedronGeometry(1, 2), 0.3, 200 + s)),
-  cones: [0, 1].map(s => jittered(new THREE.ConeGeometry(1, 1, 14, 4), 0.16, 300 + s)),
-  bush: [0, 1].map(s => jittered(new THREE.IcosahedronGeometry(1, 2), 0.35, 400 + s)),
-  trunk: jittered(new THREE.CylinderGeometry(0.75, 1, 1, 12, 5), 0.08, 500),
+  rocks: [0, 1, 2, 3].map(s => jittered(new THREE.IcosahedronGeometry(1, 5), 0.4, 100 + s)),
+  crowns: [0, 1, 2].map(s => jittered(new THREE.IcosahedronGeometry(1, 3), 0.3, 200 + s)),
+  cones: [0, 1].map(s => jittered(new THREE.ConeGeometry(1, 1, 20, 6), 0.16, 300 + s)),
+  bush: [0, 1].map(s => jittered(new THREE.IcosahedronGeometry(1, 3), 0.35, 400 + s)),
+  trunk: jittered(new THREE.CylinderGeometry(0.75, 1, 1, 16, 8), 0.08, 500),
 };
 
 export class ChunkRenderer {
@@ -72,25 +72,32 @@ export class ChunkRenderer {
       for (const [key, ch] of this.live) if (!want.has(key)) this.dispose(key, ch);
       this.queue.sort((a, b) => a.d - b.d);
     }
-    // строим несколько чанков за кадр, укладываясь в бюджет времени
-    const t0 = performance.now();
-    while (this.queue.length && performance.now() - t0 < (force ? 2000 : 7)) {
-      const q = this.queue.shift();
-      if (!this.live.has(q.key)) this.build(q.i, q.j, q.key);
+    // чанки строятся по шагам (рельеф, деревья, камни, трава, постройки), укладываясь в бюджет кадра
+    const t0 = performance.now(), budget = force ? 2000 : 7;
+    while (performance.now() - t0 < budget) {
+      if (this.cur && !this.live.has(this.curKey)) this.cur = null; // чанк уже выгружен
+      if (!this.cur) {
+        const q = this.queue.shift();
+        if (!q) break;
+        if (this.live.has(q.key)) continue;
+        this.cur = this.buildSteps(q.i, q.j, q.key); this.curKey = q.key;
+      }
+      if (this.cur.next().done) this.cur = null;
     }
   }
 
-  pending() { return this.queue.length; }
+  pending() { return this.queue.length + (this.cur ? 1 : 0); }
 
   dispose(key, ch) {
     for (const m of ch.meshes) { m.geometry.dispose(); this.group.remove(m); }
     this.live.delete(key);
   }
 
-  build(cx, cz, key) {
-    const w = this.world;
-    const d = w.chunk(cx, cz);
+  // сборка чанка по шагам (генератор); чанк сразу числится живым, чтобы его можно было выгрузить на полпути
+  *buildSteps(cx, cz, key) {
+    const d = this.world.chunk(cx, cz);
     const ch = { meshes: [], cx, cz };
+    this.live.set(key, ch);
     const tb = new MeshBuilder(0, true);
     this.buildTerrain(tb, cx, cz);
     const terrain = new THREE.Mesh(tb.build(), this.matTerrain);
@@ -98,18 +105,24 @@ export class ChunkRenderer {
     terrain.matrixAutoUpdate = false;
     ch.meshes.push(terrain);
     this.group.add(terrain);
-    this.buildObjects(ch, d);
-    this.live.set(key, ch);
+    yield;
+    yield* this.objectSteps(ch, d);
   }
 
-  buildObjects(ch, d) {
+  buildObjects(ch, d) { for (const _ of this.objectSteps(ch, d)); }
+
+  *objectSteps(ch, d) {
     const ob = new MeshBuilder(0.16, true), gb = new MeshBuilder(0, true);
     for (const t of d.trees) if (!this.world.depleted.has(t.id)) this.addTree(ob, t);
+    yield;
     for (const r of d.rocks) if (!this.world.depleted.has(r.id)) this.addRock(ob, r);
     for (const b of d.bushes) if (!this.world.depleted.has(b.id)) this.addBush(ob, b);
+    yield;
     this.addGrass(ob, d);
+    yield;
     ob.facet = 0.07;
     for (const s of d.structs) this.addStruct(ob, gb, s);
+    yield;
     if (!ob.empty) {
       const m = new THREE.Mesh(ob.build(), this.matObj);
       m.castShadow = true; m.receiveShadow = true; m.matrixAutoUpdate = false;
@@ -129,6 +142,8 @@ export class ChunkRenderer {
     const key = this.world.ckey(cx, cz);
     const ch = this.live.get(key);
     if (!ch) return;
+    // чанк ещё строится — сначала достраиваем
+    if (this.cur && this.curKey === key) { while (!this.cur.next().done); this.cur = null; }
     ch.meshes = ch.meshes.filter(m => {
       if (m.userData.objects) { m.geometry.dispose(); this.group.remove(m); return false; }
       return true;
@@ -277,7 +292,7 @@ export class ChunkRenderer {
     const G = { forest: [lin(0x5f9a3a), lin(0x78b04a)], desert: [lin(0xb8a060), lin(0xa08848)] };
     const flowers = [lin(0xf0e050), lin(0xe8e8f0), lin(0xd05a8a), lin(0x6a8ae0)];
     const pebble = lin(0x8a8680);
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 500; i++) {
       const x = d.cx * C.CHUNK + rnd() * C.CHUNK, z = d.cz * C.CHUNK + rnd() * C.CHUNK;
       const r = rnd(), a0 = rnd() * 6.28, rb = rnd();
       const bio = w.biomePick(x, z, rb);
@@ -288,8 +303,8 @@ export class ChunkRenderer {
       if (w.roadWeight(x, z) > 0.2 || w.flatWeight(x, z, 0) > 0.5) continue;
       if (r < 0.06) { mb.geo(GEO.rocks[i & 3], mat(x, h, z, a0, a0, 0, 0.18, 0.1, 0.15), shade(pebble, 0.9 + r)); continue; }
       const col = G[bio][r < 0.5 ? 0 : 1];
-      for (let k = 0; k < 5; k++) {
-        const a = a0 + k * 1.2566, bx = x + Math.cos(a) * 0.1, bz = z + Math.sin(a) * 0.1;
+      for (let k = 0; k < 7; k++) {
+        const a = a0 + k * 0.8976, bx = x + Math.cos(a) * 0.1, bz = z + Math.sin(a) * 0.1;
         const tx = x + Math.cos(a) * 0.38, tz = z + Math.sin(a) * 0.38;
         const px = -Math.sin(a) * 0.08, pz = Math.cos(a) * 0.08;
         const hh = 0.42 + r * 0.38 + (k & 1) * 0.1;
@@ -314,7 +329,7 @@ export class ChunkRenderer {
       const bb = b.bb;
       const target = b.glass ? gb : mb;
       const tall = bb[4] - bb[1] > 1.1 && !b.glass && !b.cont && Math.min(bb[3] - bb[0], bb[5] - bb[2]) < 0.5;
-      if (tall) target.boxBanded(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), 0.21);
+      if (tall) target.boxBanded(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), 0.14);
       else target.box(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), true);
       if (b.cont) {
         // тёмная «дверца» контейнера сверху, чтобы читалось как мебель

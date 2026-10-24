@@ -135,7 +135,7 @@ export class ZombieSim {
       target *= 1 + Math.min(0.7, (g.day - 1) * 0.05);
       if (g.hordeActive) target += 10 + g.level.difficulty * 4 + Math.min(12, Math.floor(g.day / 7) * 3);
       target = Math.round(target);
-      if (near < target && this.list.length < 110) {
+      if (near < target && this.list.length < 110 && !g.peace) {
         const n = Math.min(target - near, g.hordeActive ? 3 : 2);
         for (let i = 0; i < n; i++) this.trySpawnNear(p, g.hordeActive);
       }
@@ -591,7 +591,7 @@ export class ZombieViews {
       v.mesh.rotation.y = v.yaw;
       const d = Math.hypot(v.x - cam.x, v.z - cam.z);
       v.mesh.visible = d < 170;
-      const far = d > (v.T.boss ? 80 : 40);
+      const far = d > (v.T.boss ? 70 : 32);
       if (v.far !== far) { v.far = far; setLod(v.mesh, far); }
       if (v.st === 3) v.atk = (v.atk + dt * 2.2) % 1; else v.atk = 0;
       if (v.mesh.visible && d < 90) animate(v.mesh, dt, sp, { atk: v.st === 3 ? Math.sin(v.atk * Math.PI) : 0 });

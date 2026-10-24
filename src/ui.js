@@ -4,6 +4,7 @@ import { ITEMS, RECIPES, CAT_NAMES, STATION_NAMES, QUESTS, SLOT_NAMES, xpNeed } 
 import { HOTBAR, INV_SIZE, ARMOR_AT, TOTAL } from './inventory.js';
 import { BLOCK_TYPES } from './blocks.js';
 import { ZTYPES } from './zombies.js';
+import { runCommand, complete, describe } from './console.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -60,6 +61,7 @@ export class UI {
       if (e.code === 'Enter') { const t = ci.value.trim(); if (t && this.g) this.g.sendChat(t); this.closeChat(); }
       else if (e.code === 'Escape') this.closeChat();
     });
+    this.bindConsole();
     window.addEventListener('pointermove', e => this.onDragMove(e));
     window.addEventListener('pointerup', e => this.onDragEnd(e));
     $('cont-takeall').onclick = () => { if (this.g && this.contCid) this.g.takeAll(this.contCid, this.contItems); };
@@ -101,7 +103,7 @@ export class UI {
   }
 
   hideAll() {
-    for (const id of ['inv', 'map', 'pause', 'death', 'victory']) $(id).classList.add('hidden');
+    for (const id of ['inv', 'map', 'pause', 'death', 'victory', 'console']) $(id).classList.add('hidden');
     this.panel = null;
   }
 
@@ -169,6 +171,85 @@ export class UI {
       else if (!this.panel) this.openMap();
     }
     if (pressed.has('Enter') && !this.panel && this.captured) this.openChat();
+    if (pressed.has('Backquote') && !this.panel) this.openConsole();
+  }
+
+  // ---------- консоль тестового мира ----------
+  bindConsole() {
+    const ci = $('con-input');
+    this.conLines = null; this.conHist = []; this.conHistI = 0;
+    ci.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.code === 'Enter') {
+        const t = ci.value.trim();
+        ci.value = ''; $('con-hint').textContent = '';
+        if (!t || !this.g) return;
+        if (this.conHist[this.conHist.length - 1] !== t) this.conHist.push(t);
+        this.conHistI = this.conHist.length;
+        this.conOut('› ' + t, 'cmd');
+        runCommand(this.g, t, (s, c) => this.conOut(s, c));
+      } else if (e.code === 'Escape') { e.preventDefault(); this.closeConsole(true); }
+      else if (e.code === 'Backquote') { e.preventDefault(); this.closeConsole(false); }
+      else if (e.code === 'Tab') { e.preventDefault(); this.conComplete(); }
+      else if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+        e.preventDefault();
+        const n = this.conHist.length;
+        this.conHistI = Math.max(0, Math.min(n, this.conHistI + (e.code === 'ArrowUp' ? -1 : 1)));
+        ci.value = this.conHist[this.conHistI] || '';
+      }
+    });
+    ci.addEventListener('input', () => {
+      const v = ci.value;
+      $('con-hint').textContent = v && this.g ? complete(this.g, v).map(s => describe(v, s)).join('   ') : '';
+    });
+  }
+
+  openConsole() {
+    const g = this.g;
+    if (!g) return;
+    if (!g.level.test) { this.toast('Консоль есть только в тестовом мире'); return; }
+    this.openPanel('console');
+    this.typing = true;
+    if (!this.conLines) {
+      this.conLines = [];
+      this.conOut('Консоль тестового мира. help — команды, Tab — дополнить, ↑↓ — история, Ё или Esc — закрыть.', 'head');
+    } else this.renderConsole();
+    const ci = $('con-input');
+    ci.value = ''; $('con-hint').textContent = '';
+    setTimeout(() => ci.focus(), 0);
+  }
+
+  closeConsole(viaEsc) {
+    this.typing = false;
+    $('con-input').blur();
+    // по Esc захватываем мышь, только когда клавишу отпустят, — иначе браузер откроет паузу
+    if (viaEsc) { this.relockPending = true; this.hideAll(); } else this.closePanel();
+  }
+
+  conOut(text, cls = '') {
+    if (!this.conLines) this.conLines = [];
+    for (const t of String(text).split('\n')) this.conLines.push({ t, cls });
+    if (this.conLines.length > 400) this.conLines.splice(0, this.conLines.length - 400);
+    if (this.panel === 'console') this.renderConsole();
+  }
+
+  conClear() { this.conLines = []; this.renderConsole(); }
+
+  renderConsole() {
+    const log = $('con-log');
+    log.innerHTML = (this.conLines || []).map(l => `<div class="${l.cls}">${esc(l.t)}</div>`).join('');
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // Tab: один вариант — подставить, несколько — показать списком
+  conComplete() {
+    const ci = $('con-input'), v = ci.value;
+    const list = complete(this.g, v);
+    if (list.length === 1) {
+      const parts = v.replace(/^\s+/, '').split(/\s+/);
+      ci.value = (parts.length <= 1 ? list[0] : parts[0] + ' ' + list[0]) + ' ';
+      $('con-hint').textContent = '';
+    } else $('con-hint').textContent = list.map(s => describe(v, s)).join('   ');
   }
 
   // ---------- чат ----------
@@ -286,6 +367,13 @@ export class UI {
       else am.innerHTML = `<div class="w">Кулаки</div>`;
     }
     this.hudT -= dt;
+    const fpsEl = $('fps');
+    if (this.showFps) {
+      this.fpsS = this.fpsS ? this.fpsS * 0.93 + 0.07 / Math.max(dt, 1e-3) : 1 / Math.max(dt, 1e-3);
+      this.fpsT = (this.fpsT || 0) - dt;
+      if (this.fpsT <= 0) { this.fpsT = 0.25; fpsEl.textContent = Math.round(this.fpsS) + ' FPS'; }
+      fpsEl.style.display = 'block';
+    } else fpsEl.style.display = 'none';
     // полосы — каждый кадр
     const bars = $('stats').querySelectorAll('.sb i');
     const arm = g.inv.armorBar();
@@ -474,9 +562,10 @@ export class UI {
     const rows = [];
     RECIPES.forEach((r, i) => {
       const def = ITEMS[r.out];
-      const locked = P.level < r.lvl;
-      const stOk = !r.station || st[r.station];
-      const can = !locked && stOk && g.inv.hasAll(r.cost);
+      const free = g.freeCraft;
+      const locked = !free && P.level < r.lvl;
+      const stOk = free || !r.station || st[r.station];
+      const can = free || (!locked && stOk && g.inv.hasAll(r.cost));
       if (q && !def.name.toLowerCase().includes(q)) return;
       if (this.craftTab === 'can' && !can) return;
       if (this.craftTab !== 'all' && this.craftTab !== 'can' && tabOf(r.out) !== this.craftTab) return;
@@ -725,6 +814,16 @@ export class UI {
       this.drawMap();
     });
     window.addEventListener('pointerup', () => { drag = null; });
+    cv.addEventListener('dblclick', e => {
+      const g = this.g;
+      if (!g || !g.level.test) return;
+      const r = cv.getBoundingClientRect(), v = this.mapView;
+      const x = ((e.clientX - r.left) / r.width - 0.5) * C.WORLD_SIZE / v.zoom + v.cx;
+      const z = ((e.clientY - r.top) / r.height - 0.5) * C.WORLD_SIZE / v.zoom + v.cz;
+      runCommand(g, `tp ${Math.round(x)} ${Math.round(z)}`, (s, c) => this.conOut(s, c));
+      this.toast('Телепорт');
+      this.closePanel();
+    });
   }
 
   drawMap() {

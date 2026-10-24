@@ -1,11 +1,11 @@
 // Общие константы игры, биомы острова и уровни сложности.
-export const VERSION = '1.4.0';
+export const VERSION = '1.5.0';
 export const NET_PREFIX = 'mkrai-v1-';
 
 export const WORLD_SIZE = 3000;          // метров по каждой стороне
 export const HALF = WORLD_SIZE / 2;
 export const CHUNK = 100;                // размер чанка, м
-export const SEG = 64;                   // клеток рельефа по стороне чанка (в каждой 2 треугольника)
+export const SEG = 90;                   // клеток рельефа по стороне чанка (в каждой 2 треугольника)
 export const TSTEP = CHUNK / SEG;        // шаг сетки рельефа, м
 export const SEA = 0;                    // уровень воды
 export const BLOCK = 2;                  // размер строительного блока, м

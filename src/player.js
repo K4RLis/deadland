@@ -37,13 +37,14 @@ export class Player {
       if (k.has('KeyD')) s += 1;
       if (k.has('KeyA')) s -= 1;
     }
+    if (this.fly) { this.flyMove(dt, ctl, f, s); return; }
     this.crouch = ctl && (k.has('KeyC') || k.has('ControlLeft'));
     const moving = f !== 0 || s !== 0;
     // выдохся — снова бежать можно, когда выносливость восстановится до 25 (иначе бег включался бы через кадр)
     if (this.stamina <= 1) this.tired = true;
     else if (this.stamina >= 25) this.tired = false;
     this.sprint = ctl && moving && f > 0 && k.has('ShiftLeft') && !this.tired && !this.crouch && g.weapons.ads < 0.3;
-    let speed = this.crouch ? 2.0 : this.sprint ? 7.0 : 4.3;
+    let speed = (this.crouch ? 2.0 : this.sprint ? 7.0 : 4.3) * (this.speedMul || 1);
     if (this.swim) speed *= 0.55;
     if (g.weapons.useT > 0) speed *= 0.5;
     if (g.weapons.ads > 0.5) speed *= 0.65;
@@ -97,6 +98,23 @@ export class Player {
     }
   }
 
+  // полёт из консоли тестового мира: по направлению взгляда, без столкновений и гравитации
+  flyMove(dt, ctl, f, s) {
+    const k = this.g.input.keys;
+    const sp = (ctl && k.has('ShiftLeft') ? 45 : 15) * (this.speedMul || 1);
+    const cp = Math.cos(this.pitch);
+    const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
+    let vx = -Math.sin(this.yaw) * cp * f + rx * s, vy = Math.sin(this.pitch) * f, vz = -Math.cos(this.yaw) * cp * f + rz * s;
+    if (ctl && k.has('Space')) vy += 1;
+    if (ctl && (k.has('KeyC') || k.has('ControlLeft'))) vy -= 1;
+    const l = Math.hypot(vx, vy, vz);
+    if (l > 0) { vx /= l; vy /= l; vz /= l; }
+    this.vel.set(vx * sp, vy * sp, vz * sp);
+    this.pos.addScaledVector(this.vel, dt);
+    this.pos.y = Math.max(this.pos.y, this.g.world.height(this.pos.x, this.pos.z) - 30);
+    this.grounded = false; this.swim = false; this.sprint = false; this.crouch = false; this.landV = 0;
+  }
+
   updateCamera(cam) {
     const hs = Math.hypot(this.vel.x, this.vel.z);
     const bob = this.grounded ? Math.sin(this.bobT * 2) * 0.035 * Math.min(1, hs / 4) : 0;
@@ -113,7 +131,7 @@ export class Player {
   }
 
   damage(n, src, silent) {
-    if (!this.alive || n <= 0) return;
+    if (!this.alive || n <= 0 || this.god) return;
     // часть урона от зомби забирает броня
     if (src === 'zombie') n = this.g.armorAbsorb(n);
     this.hp -= n;

@@ -171,6 +171,19 @@ input:focus { border-color: var(--amber); }
 #saved { position: absolute; right: 22px; bottom: 96px; font-size: 13px; color: #b8e0a0; background: rgba(12, 14, 16, 0.6); padding: 3px 10px; opacity: 0; }
 #saved.show { animation: fade 2.4s forwards; }
 
+/* ---------- консоль тестового мира ---------- */
+#console { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); width: min(880px, calc(100vw - 32px)); z-index: 40;
+  background: rgba(10, 12, 14, 0.93); border: 1px solid var(--line); padding: 10px 12px; font: 13px/1.45 Consolas, 'Courier New', monospace; }
+#con-log { height: 42vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+#con-log .head { color: var(--amber); }
+#con-log .cmd { color: #8fc0e8; }
+#con-log .err { color: #ff6a50; }
+.con-in { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.con-in span { color: var(--amber); font-weight: 700; }
+#con-input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; padding: 2px 0; color: var(--text); font: inherit; }
+#con-hint { min-height: 18px; margin-top: 4px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#fps { position: absolute; right: 22px; top: 72px; display: none; font: 700 13px Consolas, monospace; color: #b8e0a0; background: rgba(12, 14, 16, 0.6); padding: 2px 8px; }
+
 /* ---------- инвентарь ---------- */
 .inv-wrap { display: flex; gap: 12px; align-items: flex-start; max-height: 92vh; max-width: 98vw; }
 .inv-col { min-width: 0; }

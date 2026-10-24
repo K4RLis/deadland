@@ -111,12 +111,23 @@ export class Game {
     this.water.rotation.x = -Math.PI / 2;
     this.water.position.y = C.SEA - 0.25;
     s.add(this.water);
-    // гранёные волны вокруг игрока (плоское затенение — каждый треугольник бликует отдельно)
-    const wg = new THREE.PlaneGeometry(640, 640, 90, 90);
+    // гранёные волны вокруг игрока (плоское затенение — каждый треугольник бликует отдельно);
+    // высоту волн считает вершинный шейдер, процессор их не трогает
+    const wg = new THREE.PlaneGeometry(640, 640, 128, 128);
     wg.rotateX(-Math.PI / 2);
-    this.waveGeo = wg.toNonIndexed();
-    this.waveBase = Float32Array.from(this.waveGeo.attributes.position.array);
-    this.waves = new THREE.Mesh(this.waveGeo, new THREE.MeshPhongMaterial({ color: wc, transparent: true, opacity: 0.84, flatShading: true, shininess: 80, specular: 0x5a7a9a }));
+    const wm = new THREE.MeshPhongMaterial({ color: wc, transparent: true, opacity: 0.84, flatShading: true, shininess: 80, specular: 0x5a7a9a });
+    this.waveT = { value: 0 };
+    wm.onBeforeCompile = sh => {
+      sh.uniforms.uWaveT = this.waveT;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uWaveT;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          {
+            vec3 wp = (modelMatrix * vec4(transformed, 1.0)).xyz;
+            transformed.y += sin(wp.x * 0.21 + uWaveT * 1.6) * 0.13 + sin(wp.z * 0.17 + uWaveT * 1.25) * 0.11 + sin((wp.x + wp.z) * 0.33 + uWaveT * 2.1) * 0.05;
+          }`);
+    };
+    this.waves = new THREE.Mesh(wg, wm);
     this.waves.position.y = C.SEA;
     this.waves.frustumCulled = false;
     s.add(this.waves);
@@ -137,7 +148,7 @@ export class Game {
     this.skyCol = new THREE.Color();
     this._c1 = new THREE.Color(); this._c2 = new THREE.Color();
     // гранёный небесный купол: цвет каждого треугольника считается от высоты и направления на солнце
-    const dg = new THREE.IcosahedronGeometry(1000, 6);
+    const dg = new THREE.IcosahedronGeometry(1000, 9);
     dg.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(dg.attributes.position.count * 3), 3));
     this.dome = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
     this.dome.renderOrder = -10;
@@ -147,7 +158,7 @@ export class Game {
     const cb = new MeshBuilder(0.1);
     let sd = 991;
     const rnd = () => { sd = (Math.imul(sd, 1103515245) + 12345) | 0; return ((sd >>> 8) & 0xffff) / 0xffff; };
-    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 3));
+    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 4));
     for (let i = 0; i < 16; i++) {
       const cx = rnd() * 1200 - 600, cz = rnd() * 1200 - 600, cy = 190 + rnd() * 50;
       const n = 4 + Math.floor(rnd() * 5), size = 18 + rnd() * 22;
@@ -171,12 +182,7 @@ export class Game {
   updateWaves(cp) {
     const wx = Math.round(cp.x / 10) * 10, wz = Math.round(cp.z / 10) * 10;
     this.waves.position.x = wx; this.waves.position.z = wz;
-    const t = this.time, base = this.waveBase, pa = this.waveGeo.attributes.position.array;
-    for (let i = 0; i < pa.length; i += 3) {
-      const x = base[i] + wx, z = base[i + 2] + wz;
-      pa[i + 1] = Math.sin(x * 0.21 + t * 1.6) * 0.13 + Math.sin(z * 0.17 + t * 1.25) * 0.11 + Math.sin((x + z) * 0.33 + t * 2.1) * 0.05;
-    }
-    this.waveGeo.attributes.position.needsUpdate = true;
+    this.waveT.value = this.time;
   }
 
   // угол солнца: день (рассвет..закат) — половина круга, ночь — вторая половина
@@ -341,6 +347,7 @@ export class Game {
     this.applySettings('all');
     if (this.isHost && !this.solo) this.ui.feed(`Комната открыта. Код: <b>${this.code}</b>`);
     this.ui.toast(this.level.name + ' — день ' + this.day);
+    if (this.level.test) this.ui.feed('Тестовый мир: консоль — клавиша <b>Ё</b> (<b>help</b> — команды), двойной клик по карте — телепорт');
   }
 
   // появление на пляже: сначала лесные берега (там безопаснее), потом пустынные; лицом к острову
@@ -1238,10 +1245,10 @@ export class Game {
   }
 
   craft(r) {
-    const P = this.player;
-    if (P.level < r.lvl || !this.inv.hasAll(r.cost)) return false;
-    if (!this.stationOK(r.station)) { this.ui.toast('Нужно стоять рядом: ' + STATION_NAMES[r.station]); return false; }
-    for (const id in r.cost) this.inv.remove(id, r.cost[id]);
+    const P = this.player, free = this.freeCraft; // free — бесплатный крафт из консоли тестового мира
+    if (!free && (P.level < r.lvl || !this.inv.hasAll(r.cost))) return false;
+    if (!free && !this.stationOK(r.station)) { this.ui.toast('Нужно стоять рядом: ' + STATION_NAMES[r.station]); return false; }
+    if (!free) for (const id in r.cost) this.inv.remove(id, r.cost[id]);
     const left = this.inv.add(r.out, r.n);
     if (left) this.dropItems([left]);
     this.sfx.craft();
