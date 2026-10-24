@@ -8,7 +8,7 @@ import { ChunkRenderer } from './chunks.js';
 import { Blocks, BLOCK_TYPES, colliderBox, unpackBlock } from './blocks.js';
 import { Fx } from './fx.js';
 import { Player } from './player.js';
-import { Inventory, HOTBAR } from './inventory.js';
+import { Inventory, HOTBAR, INV_SIZE, ARMOR_AT } from './inventory.js';
 import { Weapons } from './weapons.js';
 import { ZombieSim, ZombieViews, ZTYPES, ZT } from './zombies.js';
 import { ITEMS, makeItem, rollLoot, xpNeed, QUESTS, STATION_NAMES } from './items.js';
@@ -35,6 +35,7 @@ const TOOLS = new Set(['axe', 'pickaxe', 'iaxe', 'ipick']);
 
 // набор тестового мира
 const TEST_KIT = ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'iaxe', 'ipick'];
+const TEST_ARMOR = ['helmet', 'milvest', 'kneepads'];
 
 export class Game {
   constructor(o) {
@@ -111,7 +112,7 @@ export class Game {
     this.water.position.y = C.SEA - 0.25;
     s.add(this.water);
     // гранёные волны вокруг игрока (плоское затенение — каждый треугольник бликует отдельно)
-    const wg = new THREE.PlaneGeometry(640, 640, 64, 64);
+    const wg = new THREE.PlaneGeometry(640, 640, 90, 90);
     wg.rotateX(-Math.PI / 2);
     this.waveGeo = wg.toNonIndexed();
     this.waveBase = Float32Array.from(this.waveGeo.attributes.position.array);
@@ -136,7 +137,7 @@ export class Game {
     this.skyCol = new THREE.Color();
     this._c1 = new THREE.Color(); this._c2 = new THREE.Color();
     // гранёный небесный купол: цвет каждого треугольника считается от высоты и направления на солнце
-    const dg = new THREE.IcosahedronGeometry(1000, 4);
+    const dg = new THREE.IcosahedronGeometry(1000, 6);
     dg.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(dg.attributes.position.count * 3), 3));
     this.dome = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
     this.dome.renderOrder = -10;
@@ -146,7 +147,7 @@ export class Game {
     const cb = new MeshBuilder(0.1);
     let sd = 991;
     const rnd = () => { sd = (Math.imul(sd, 1103515245) + 12345) | 0; return ((sd >>> 8) & 0xffff) / 0xffff; };
-    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 2));
+    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 3));
     for (let i = 0; i < 16; i++) {
       const cx = rnd() * 1200 - 600, cz = rnd() * 1200 - 600, cy = 190 + rnd() * 50;
       const n = 4 + Math.floor(rnd() * 5), size = 18 + rnd() * 22;
@@ -561,8 +562,8 @@ export class Game {
     if (this.snapT <= 0 && this.net && this.net.conns.size) {
       this.snapT = 0.1;
       const P = this.player;
-      const all = [[this.myId, +P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2), this.weapons.curId || '', this.myFlags(), Math.round(P.hp)]];
-      for (const p of this.hplayers.values()) if (p.y > -500) all.push([p.pid, p.x, p.y, p.z, p.yaw, p.pitch, p.w, p.f, p.hp]);
+      const all = [[this.myId, +P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2), this.weapons.curId || '', this.myFlags(), Math.round(P.hp), this.armorLook()]];
+      for (const p of this.hplayers.values()) if (p.y > -500) all.push([p.pid, p.x, p.y, p.z, p.yaw, p.pitch, p.w, p.f, p.hp, p.ar || '']);
       for (const pid of this.net.conns.keys()) {
         const me = this.hplayers.get(pid);
         const zs = [];
@@ -604,8 +605,9 @@ export class Game {
         if (!hp || !Array.isArray(m.p)) return;
         hp.x = +m.p[0]; hp.y = +m.p[1]; hp.z = +m.p[2]; hp.yaw = +m.p[3]; hp.pitch = +m.p[4];
         hp.w = ITEMS[m.w] ? m.w : ''; hp.f = m.f | 0; hp.hp = m.hp | 0;
+        hp.ar = typeof m.ar === 'string' ? m.ar.slice(0, 60) : '';
         hp.alive = !(hp.f & 2);
-        this.syncOther([pid, hp.x, hp.y, hp.z, hp.yaw, hp.pitch, hp.w, hp.f, hp.hp]);
+        this.syncOther([pid, hp.x, hp.y, hp.z, hp.yaw, hp.pitch, hp.w, hp.f, hp.hp, hp.ar]);
         break;
       case 'hitZ': {
         const z = this.zsim.damage(m.id, Math.min(400, +m.d || 0), pid);
@@ -838,7 +840,7 @@ export class Game {
     if (this.sendT <= 0) {
       this.sendT = 1 / 15;
       const P = this.player;
-      this.net.toHost({ t: 'st', p: [+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2)], w: this.weapons.curId || '', f: this.myFlags(), hp: Math.round(P.hp) });
+      this.net.toHost({ t: 'st', p: [+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2)], w: this.weapons.curId || '', f: this.myFlags(), hp: Math.round(P.hp), ar: this.armorLook() });
     }
     this.saveT -= dt;
     if (this.saveT <= 0) this.saveAll(false);
@@ -971,18 +973,26 @@ export class Game {
 
   // ---------- другие игроки ----------
   syncOther(a) {
-    const [pid, x, y, z, yaw, pitch, w, f, hp] = a;
+    const [pid, x, y, z, yaw, pitch, w, f, hp, ar = ''] = a;
     if (pid === this.myId) return;
     let o = this.others.get(pid);
+    const r = this.roster.get(pid) || { name: 'Игрок', color: 0x888888 };
+    if (o && o.ar !== ar) {
+      // сменилась броня — пересобираем модель, бирку с именем переносим
+      const old = o.mesh, mesh = makePlayerModel(r.color, pid, ar);
+      mesh.position.copy(old.position); mesh.rotation.copy(old.rotation);
+      old.remove(o.tag); mesh.add(o.tag);
+      this.scene.remove(old); this.scene.add(mesh);
+      o.mesh = mesh; o.ar = ar; o.w = null;
+    }
     if (!o) {
-      const r = this.roster.get(pid) || { name: 'Игрок', color: 0x888888 };
-      const mesh = makePlayerModel(r.color, pid);
+      const mesh = makePlayerModel(r.color, pid, ar);
       const tag = makeNameTag(r.name);
       tag.position.y = 2.2;
       mesh.add(tag);
       mesh.position.set(x, y, z);
       this.scene.add(mesh);
-      o = { pid, mesh, tag, x, y, z, yaw, tx: x, ty: y, tz: z, tyaw: yaw, pitch: 0, w: null, f: 0, hp, seen: 0 };
+      o = { pid, mesh, tag, x, y, z, yaw, tx: x, ty: y, tz: z, tyaw: yaw, pitch: 0, w: null, f: 0, hp, seen: 0, ar };
       this.others.set(pid, o);
     }
     o.tx = x; o.ty = y; o.tz = z; o.tyaw = yaw; o.pitch = pitch; o.f = f; o.hp = hp; o.seen = performance.now();
@@ -1210,6 +1220,10 @@ export class Game {
     if (!it) return;
     const def = ITEMS[it.id];
     const P = this.player;
+    if (def.cat === 'armor') {
+      if (this.inv.toggleArmor(i)) this.sfx.click(); else this.ui.toast('Рюкзак полон');
+      return;
+    }
     if (def.cat === 'food' || def.cat === 'med') {
       if (def.heal) P.hp = Math.min(P.maxHp, P.hp + def.heal);
       if (def.food) P.food = clamp(P.food + def.food, 0, 100);
@@ -1240,8 +1254,20 @@ export class Game {
   // сложить в контейнер всё из рюкзака (хотбар не трогаем)
   putAll(cid) {
     let n = 0;
-    for (let i = 8; i < this.inv.slots.length; i++) if (this.inv.slots[i]) { this.putToContainer(cid, i); n++; }
+    for (let i = HOTBAR; i < INV_SIZE; i++) if (this.inv.slots[i]) { this.putToContainer(cid, i); n++; }
     if (!n) this.ui.toast('Рюкзак пуст');
+  }
+
+  // броня забирает часть урона; сломанная пропадает
+  armorAbsorb(n) {
+    const r = this.inv.absorb(n);
+    for (const name of r.broke) this.ui.toast('Броня сломалась: ' + name);
+    return r.n;
+  }
+
+  // что надето — для модели игрока у остальных: «голова,тело,ноги»
+  armorLook() {
+    return ['head', 'body', 'legs'].map(k => (this.inv.slots[ARMOR_AT[k]] || {}).id || '').join(',');
   }
 
   addXP(n) {
@@ -1345,6 +1371,11 @@ export class Game {
   // все стволы и железные инструменты на панели; пропавшие (например, из старого сохранения) выдаются заново
   giveTestKit() {
     const inv = this.inv;
+    // армейская броня — сразу надета
+    for (const id of TEST_ARMOR) {
+      const at = ARMOR_AT[ITEMS[id].slot];
+      if (!inv.slots[at] && inv.count(id) <= 0) { inv.slots[at] = makeItem(id, 1); inv.changed(); }
+    }
     const missing = TEST_KIT.filter(id => inv.count(id) <= 0);
     if (!missing.length) return;
     // освобождаем панель под стволы: прочие вещи с неё уходят в рюкзак

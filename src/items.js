@@ -40,6 +40,16 @@ export const ITEMS = {
   bpotato: { name: 'Печёный картофель', cat: 'food', stack: 20, food: 28, use: 0.9 },
   stew: { name: 'Похлёбка', cat: 'food', stack: 5, food: 45, water: 25, use: 1.4 },
   tea: { name: 'Травяной чай', cat: 'food', stack: 6, water: 35, heal: 5, use: 1.0 },
+  // броня: slot — куда надевается, armor — доля урона, которую она принимает, dur — прочность (сколько урона примет)
+  hardhat: { name: 'Строительная каска', cat: 'armor', slot: 'head', armor: 0.08, dur: 120, stack: 1 },
+  helmet: { name: 'Военный шлем', cat: 'armor', slot: 'head', armor: 0.15, dur: 260, stack: 1 },
+  jacket: { name: 'Плотная куртка', cat: 'armor', slot: 'body', armor: 0.1, dur: 140, stack: 1 },
+  scrapvest: { name: 'Жилет из металлолома', cat: 'armor', slot: 'body', armor: 0.18, dur: 220, stack: 1 },
+  policevest: { name: 'Полицейский бронежилет', cat: 'armor', slot: 'body', armor: 0.25, dur: 300, stack: 1 },
+  milvest: { name: 'Армейский бронежилет', cat: 'armor', slot: 'body', armor: 0.35, dur: 450, stack: 1 },
+  pants: { name: 'Плотные штаны', cat: 'armor', slot: 'legs', armor: 0.05, dur: 120, stack: 1 },
+  greaves: { name: 'Поножи из металлолома', cat: 'armor', slot: 'legs', armor: 0.1, dur: 200, stack: 1 },
+  kneepads: { name: 'Армейские наколенники', cat: 'armor', slot: 'legs', armor: 0.12, dur: 260, stack: 1 },
   // материалы
   wood: { name: 'Древесина', cat: 'mat', stack: 100 },
   stone: { name: 'Камень', cat: 'mat', stack: 100 },
@@ -70,21 +80,24 @@ export const ITEMS = {
   b_collector: { name: 'Сборщик воды', cat: 'block', stack: 4, block: 'collector' },
 };
 
-export const CAT_NAMES = { melee: 'Ближний бой', gun: 'Оружие', ammo: 'Патроны', med: 'Медицина', food: 'Еда и вода', mat: 'Материалы', block: 'Постройка' };
+export const CAT_NAMES = { melee: 'Ближний бой', gun: 'Оружие', ammo: 'Патроны', armor: 'Броня', med: 'Медицина', food: 'Еда и вода', mat: 'Материалы', block: 'Постройка' };
+export const SLOT_NAMES = { head: 'Голова', body: 'Тело', legs: 'Ноги' };
+// больше этой доли урона броня не забирает, даже если надето всё лучшее
+export const ARMOR_CAP = 0.65;
 
 // [id, вес, min, max]
 export const LOOT = {
   house: [['can', 10, 1, 2], ['chips', 8, 1, 2], ['water', 10, 1, 2], ['soda', 6, 1, 1], ['bandage', 8, 1, 2], ['cloth', 9, 1, 3], ['potato', 5, 1, 3],
-    ['knife', 3], ['bat', 2.5], ['hammer', 2], ['axe', 1.5], ['a9', 3, 6, 14], ['a12', 1.5, 2, 6], ['pistol', 1.2], ['shotgun', 0.4], ['scrap', 4, 1, 3], ['medkit', 0.8]],
+    ['knife', 3], ['bat', 2.5], ['hammer', 2], ['axe', 1.5], ['a9', 3, 6, 14], ['a12', 1.5, 2, 6], ['pistol', 1.2], ['shotgun', 0.4], ['scrap', 4, 1, 3], ['medkit', 0.8], ['jacket', 1], ['pants', 1.5]],
   shop: [['can', 14, 1, 3], ['chips', 12, 1, 3], ['water', 14, 1, 3], ['soda', 10, 1, 2], ['mre', 2], ['bandage', 4, 1, 2], ['cloth', 3, 1, 2], ['potato', 6, 2, 4]],
   medical: [['bandage', 14, 1, 3], ['medkit', 8], ['water', 4], ['cloth', 5, 1, 3], ['tea', 3]],
-  police: [['pistol', 6], ['shotgun', 3.5], ['smg', 1.5], ['a9', 10, 8, 20], ['a12', 7, 4, 10], ['bandage', 5, 1, 2], ['medkit', 2.5], ['bat', 2]],
-  industrial: [['axe', 4], ['pickaxe', 4], ['hammer', 5], ['machete', 2], ['ipick', 0.8], ['iaxe', 0.8], ['scrap', 10, 2, 6], ['iron', 4, 1, 4], ['wood', 6, 4, 10], ['cloth', 3, 1, 3], ['water', 3]],
-  military: [['rifle', 5], ['asval', 1.6], ['a939', 4, 10, 25], ['sniper', 1.5], ['smg', 3], ['shotgun', 3], ['a762', 10, 10, 30], ['a308', 4, 3, 8], ['a9', 5, 10, 20], ['a12', 4, 5, 10], ['medkit', 5], ['mre', 6], ['water', 4], ['iron', 3, 2, 5]],
-  car: [['scrap', 8, 1, 4], ['water', 4], ['a9', 3, 4, 10], ['bandage', 3], ['chips', 3], ['pistol', 0.6], ['cloth', 3, 1, 2]],
-  crash: [['rifle', 4], ['asval', 3], ['a939', 4, 15, 30], ['sniper', 2.5], ['a762', 6, 15, 30], ['a308', 4, 5, 10], ['medkit', 4], ['mre', 3], ['iron', 4, 3, 8]],
-  zombie: [['cloth', 8, 1, 2], ['can', 2], ['water', 2], ['a9', 2, 3, 8], ['bandage', 2], ['scrap', 3, 1, 2], ['a762', 0.7, 4, 10], ['a12', 0.8, 2, 5]],
-  boss: [['rifle', 5], ['asval', 4], ['a939', 5, 20, 40], ['sniper', 3], ['smg', 3], ['a762', 8, 30, 60], ['a308', 5, 10, 20], ['a12', 4, 10, 20], ['medkit', 6, 1, 3], ['iron', 6, 6, 14], ['ipick', 2], ['iaxe', 2], ['mre', 4, 1, 3]],
+  police: [['pistol', 6], ['shotgun', 3.5], ['smg', 1.5], ['a9', 10, 8, 20], ['a12', 7, 4, 10], ['bandage', 5, 1, 2], ['medkit', 2.5], ['bat', 2], ['policevest', 2.5]],
+  industrial: [['axe', 4], ['pickaxe', 4], ['hammer', 5], ['machete', 2], ['ipick', 0.8], ['iaxe', 0.8], ['scrap', 10, 2, 6], ['iron', 4, 1, 4], ['wood', 6, 4, 10], ['cloth', 3, 1, 3], ['water', 3], ['hardhat', 3], ['greaves', 1.2]],
+  military: [['rifle', 5], ['asval', 1.6], ['a939', 4, 10, 25], ['sniper', 1.5], ['smg', 3], ['shotgun', 3], ['a762', 10, 10, 30], ['a308', 4, 3, 8], ['a9', 5, 10, 20], ['a12', 4, 5, 10], ['medkit', 5], ['mre', 6], ['water', 4], ['iron', 3, 2, 5], ['helmet', 3], ['milvest', 1.5], ['kneepads', 2.5]],
+  car: [['scrap', 8, 1, 4], ['water', 4], ['a9', 3, 4, 10], ['bandage', 3], ['chips', 3], ['pistol', 0.6], ['cloth', 3, 1, 2], ['jacket', 0.8]],
+  crash: [['rifle', 4], ['asval', 3], ['a939', 4, 15, 30], ['sniper', 2.5], ['a762', 6, 15, 30], ['a308', 4, 5, 10], ['medkit', 4], ['mre', 3], ['iron', 4, 3, 8], ['milvest', 2], ['helmet', 2]],
+  zombie: [['cloth', 8, 1, 2], ['can', 2], ['water', 2], ['a9', 2, 3, 8], ['bandage', 2], ['scrap', 3, 1, 2], ['a762', 0.7, 4, 10], ['a12', 0.8, 2, 5], ['hardhat', 0.4], ['pants', 0.4]],
+  boss: [['rifle', 5], ['asval', 4], ['a939', 5, 20, 40], ['sniper', 3], ['smg', 3], ['a762', 8, 30, 60], ['a308', 5, 10, 20], ['a12', 4, 10, 20], ['medkit', 6, 1, 3], ['iron', 6, 6, 14], ['ipick', 2], ['iaxe', 2], ['mre', 4, 1, 3], ['milvest', 3], ['helmet', 2.5], ['kneepads', 2.5]],
 };
 
 const ITEM_COUNT = { house: [1, 3], shop: [2, 4], medical: [1, 3], police: [1, 3], industrial: [1, 3], military: [2, 4], car: [1, 2], crash: [3, 4], zombie: [1, 1], boss: [5, 7] };
@@ -93,6 +106,7 @@ export function makeItem(id, n = 1) {
   const def = ITEMS[id];
   const it = { id, n: Math.min(n, def.stack) };
   if (def.cat === 'gun') it.ammo = 0;
+  if (def.cat === 'armor') it.dur = def.dur;
   return it;
 }
 
@@ -109,6 +123,7 @@ export function rollLoot(tier, rand, mul = 1) {
     const cnt = e.length > 2 ? e[2] + Math.floor(rand() * (e[3] - e[2] + 1)) : 1;
     const it = makeItem(e[0], cnt);
     if (ITEMS[e[0]].cat === 'gun') it.ammo = Math.floor(rand() * (ITEMS[e[0]].mag + 1) * 0.6);
+    if (ITEMS[e[0]].cat === 'armor') it.dur = Math.round(ITEMS[e[0]].dur * (0.45 + rand() * 0.55));
     out.push(it);
   }
   return out;
@@ -160,6 +175,16 @@ export const RECIPES = [
   { out: 'a939', n: 10, cost: { iron: 2, scrap: 2 }, lvl: 11, station: 'bench' },
   { out: 'asval', n: 1, cost: { iron: 20, trophy: 1, cloth: 2 }, lvl: 13, station: 'bench' },
   { out: 'sniper', n: 1, cost: { iron: 22, trophy: 2 }, lvl: 15, station: 'bench' },
+  // броня
+  { out: 'pants', n: 1, cost: { cloth: 6 }, lvl: 2 },
+  { out: 'jacket', n: 1, cost: { cloth: 8, fiber: 4 }, lvl: 2, station: 'bench' },
+  { out: 'hardhat', n: 1, cost: { scrap: 4, cloth: 1 }, lvl: 3, station: 'bench' },
+  { out: 'greaves', n: 1, cost: { scrap: 6, cloth: 2 }, lvl: 4, station: 'bench' },
+  { out: 'scrapvest', n: 1, cost: { scrap: 10, cloth: 4 }, lvl: 5, station: 'bench' },
+  { out: 'kneepads', n: 1, cost: { iron: 3, cloth: 3 }, lvl: 7, station: 'bench' },
+  { out: 'helmet', n: 1, cost: { iron: 6, cloth: 2 }, lvl: 8, station: 'forge' },
+  { out: 'policevest', n: 1, cost: { iron: 8, cloth: 6 }, lvl: 10, station: 'bench' },
+  { out: 'milvest', n: 1, cost: { iron: 12, cloth: 6, trophy: 1 }, lvl: 12, station: 'bench' },
 ];
 
 // Задания выживания — подсказывают, что делать дальше, и дают опыт

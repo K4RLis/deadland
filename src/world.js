@@ -140,7 +140,7 @@ export class World {
     const key = (ix + 2048) * 4096 + (iz + 2048);
     let h = this.hCache.get(key);
     if (h === undefined) {
-      if (this.hCache.size > 500000) this.hCache.clear();
+      if (this.hCache.size > 900000) this.hCache.clear();
       const o = this._vo || (this._vo = {});
       h = this.pointInfo(ix * C.TSTEP, iz * C.TSTEP, o) + this.jit(ix, iz, o);
       this.hCache.set(key, h);

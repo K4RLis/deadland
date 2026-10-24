@@ -1,12 +1,15 @@
 // Инвентарь: 8 слотов хотбара + 24 рюкзака.
-import { ITEMS, makeItem } from './items.js';
+import { ITEMS, makeItem, ARMOR_CAP } from './items.js';
 
 export const HOTBAR = 8;
 export const INV_SIZE = 32;
+// слоты брони идут сразу после рюкзака
+export const ARMOR_AT = { head: 32, body: 33, legs: 34 };
+export const TOTAL = 35;
 
 export class Inventory {
   constructor() {
-    this.slots = new Array(INV_SIZE).fill(null);
+    this.slots = new Array(TOTAL).fill(null);
     this.onChange = null;
   }
 
@@ -89,11 +92,19 @@ export class Inventory {
     return out;
   }
 
-  // перемещение/объединение/обмен слотов
+  // можно ли положить предмет в слот i: в слот брони — только броню для этого места
+  fits(i, it) {
+    if (i < INV_SIZE || !it) return true;
+    const def = ITEMS[it.id];
+    return def.cat === 'armor' && ARMOR_AT[def.slot] === i;
+  }
+
+  // перемещение/объединение/обмен слотов; false — предмет туда не подходит
   move(a, b) {
-    if (a === b) return;
+    if (a === b) return true;
     const A = this.slots[a], B = this.slots[b];
-    if (!A) return;
+    if (!A) return true;
+    if (!this.fits(b, A) || !this.fits(a, B)) return false;
     if (B && B.id === A.id && ITEMS[A.id].stack > 1) {
       const st = ITEMS[A.id].stack;
       const k = Math.min(A.n, st - B.n);
@@ -103,6 +114,53 @@ export class Inventory {
       this.slots[a] = B; this.slots[b] = A;
     }
     this.changed();
+    return true;
+  }
+
+  // надеть броню из слота i (снятая встаёт на её место) или снять надетую в рюкзак
+  toggleArmor(i) {
+    const s = this.slots[i];
+    if (!s || ITEMS[s.id].cat !== 'armor') return false;
+    if (i < INV_SIZE) return this.move(i, ARMOR_AT[ITEMS[s.id].slot]);
+    let t = this.target(s.id, HOTBAR, INV_SIZE);
+    if (t < 0) t = this.target(s.id, 0, HOTBAR);
+    return t >= 0 && this.move(i, t);
+  }
+
+  // защита надетой брони: доля урона, которую она забирает
+  armor() {
+    let a = 0;
+    for (const k in ARMOR_AT) { const s = this.slots[ARMOR_AT[k]]; if (s) a += ITEMS[s.id].armor; }
+    return Math.min(ARMOR_CAP, a);
+  }
+
+  // то же с учётом износа — для полоски в HUD (0..1)
+  armorBar() {
+    let a = 0;
+    for (const k in ARMOR_AT) {
+      const s = this.slots[ARMOR_AT[k]];
+      if (s) { const d = ITEMS[s.id]; a += d.armor * Math.max(0, (s.dur ?? d.dur) / d.dur); }
+    }
+    return Math.min(1, a / ARMOR_CAP);
+  }
+
+  // броня принимает свою долю урона и изнашивается на столько же; возвращает урон, дошедший до игрока
+  absorb(n) {
+    let sum = 0;
+    for (const k in ARMOR_AT) { const s = this.slots[ARMOR_AT[k]]; if (s) sum += ITEMS[s.id].armor; }
+    if (sum <= 0) return { n, broke: [] };
+    const scale = Math.min(1, ARMOR_CAP / sum), broke = [];
+    let taken = 0;
+    for (const k in ARMOR_AT) {
+      const i = ARMOR_AT[k], s = this.slots[i];
+      if (!s) continue;
+      const def = ITEMS[s.id], part = n * def.armor * scale;
+      taken += part;
+      s.dur = (s.dur ?? def.dur) - part;
+      if (s.dur <= 0) { broke.push(def.name); this.slots[i] = null; }
+    }
+    this.changed();
+    return { n: n - taken, broke };
   }
 
   hasAll(cost) {
@@ -151,8 +209,8 @@ export class Inventory {
 
   serialize() { return this.slots.map(s => (s ? { ...s } : null)); }
   load(arr) {
-    this.slots = new Array(INV_SIZE).fill(null);
-    if (Array.isArray(arr)) arr.forEach((s, i) => { if (s && ITEMS[s.id] && i < INV_SIZE) this.slots[i] = { ...s }; });
+    this.slots = new Array(TOTAL).fill(null);
+    if (Array.isArray(arr)) arr.forEach((s, i) => { if (s && ITEMS[s.id] && i < TOTAL && this.fits(i, s)) this.slots[i] = { ...s }; });
     this.changed();
   }
   clear() { this.slots.fill(null); this.changed(); }

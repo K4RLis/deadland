@@ -108,10 +108,11 @@ input:focus { border-color: var(--amber); }
 #usebar i { display: block; height: 100%; width: 0; background: var(--amber); }
 #stats { position: absolute; left: 18px; bottom: 18px; width: 240px; background: rgba(12, 14, 16, 0.6); padding: 8px 10px; }
 .stat { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
-.stat span { width: 40px; font-size: 11px; color: var(--muted); font-weight: 700; letter-spacing: 0.05em; }
+.stat span { width: 46px; font-size: 11px; color: var(--muted); font-weight: 700; letter-spacing: 0.05em; }
 .sb { flex: 1; height: 9px; background: rgba(255, 255, 255, 0.08); }
 .sb i { display: block; height: 100%; width: 100%; }
 .hp .sb i { background: #c8432f; } .st .sb i { background: #d9c24a; } .fd .sb i { background: #d98a3a; } .wt .sb i { background: #4b8fc9; }
+.ar .sb i { background: #8fa4b8; }
 .stat.low span { color: #ff6a50; }
 #hotbar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 4px; }
 .slot { width: var(--slot); height: var(--slot); background: rgba(22, 26, 30, 0.82); border: 1px solid var(--line); position: relative; pointer-events: auto; }
@@ -180,6 +181,11 @@ input:focus { border-color: var(--amber); }
 .inv-char .kv b { color: var(--text); font-weight: 500; }
 .grid { display: grid; grid-template-columns: repeat(8, var(--slot)); gap: 4px; }
 #inv-grid .slot:nth-child(-n+8) { background: rgba(40, 36, 22, 0.85); }
+.armor-slots { display: flex; gap: 6px; margin: 2px 0 12px; }
+.slot.arm { background: rgba(28, 38, 48, 0.88); cursor: pointer; }
+.slot.arm:hover { border-color: #8a949c; }
+.slot.arm:empty::after { content: attr(data-label); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.slot .am.dur i { background: #8fc0e8; }
 #inv-grid .row-gap { grid-column: 1 / -1; height: 16px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; line-height: 18px; }
 .slot.picked { outline: 2px dashed var(--amber); outline-offset: -3px; opacity: 0.55; }
 #inv-grid .slot:hover, #cont-grid .slot:hover { border-color: #8a949c; background: rgba(48, 56, 62, 0.9); }

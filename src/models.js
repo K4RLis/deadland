@@ -17,14 +17,14 @@ export function M(hex, emissive = 0) {
 }
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
-const CYL = new THREE.CylinderGeometry(1, 1, 1, 8);
-const CYL12 = new THREE.CylinderGeometry(1, 1, 1, 12);
-const FRUST = new THREE.CylinderGeometry(0.7, 1, 1, 8);
-const ICO = new THREE.IcosahedronGeometry(1, 0);
-const ICO1 = new THREE.IcosahedronGeometry(1, 1);
-const DODE = new THREE.DodecahedronGeometry(1, 0);
-const CONE = new THREE.ConeGeometry(1, 1, 6);
-const CONE8 = new THREE.ConeGeometry(1, 1, 8);
+const CYL = new THREE.CylinderGeometry(1, 1, 1, 12);
+const CYL12 = new THREE.CylinderGeometry(1, 1, 1, 18);
+const FRUST = new THREE.CylinderGeometry(0.7, 1, 1, 12);
+const ICO = new THREE.IcosahedronGeometry(1, 1);
+const ICO1 = new THREE.IcosahedronGeometry(1, 2);
+const DODE = new THREE.DodecahedronGeometry(1, 1);
+const CONE = new THREE.ConeGeometry(1, 1, 9);
+const CONE8 = new THREE.ConeGeometry(1, 1, 12);
 const PI2 = Math.PI / 2;
 
 export function part(parent, w, h, d, hex, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, geo = BOX, em = 0) {
@@ -205,6 +205,13 @@ export function makeHumanoid(o) {
     else L.push([0.215 * W, 0.035, 0.245, dk(pants, 0.55), 0, -0.48, 0.0, R(0.3)], [0.06, 0.07, 0.014, WOUND, 0.02, -0.6, -0.116]);
     if (zv === 2) L.push([0.1 * W, 0.15, 0.014, BLOOD, 0.01, -0.13, -0.134]);
     if (zv === 3 && side > 0) L.push([0.11 * W, 0.07, 0.014, dk(skin, 0.85), 0, -0.44, -0.12]);
+    if (o.greaves != null) {
+      // наколенник, щиток на голени и ремешки
+      const gv = o.greaves;
+      L.push([0.215 * W, 0.12, 0.07, gv, 0, -0.44, -0.12, R(0.4)],
+        [0.2 * W, 0.18, 0.04, dk(gv, 0.9), 0, -0.58, -0.113, R(0.3)],
+        [0.235 * W, 0.025, 0.27, STRAP, 0, -0.37, 0.002], [0.21 * W, 0.025, 0.232, STRAP, 0, -0.62, 0.004]);
+    }
     limb(l, L);
     body.add(l);
   }
@@ -247,6 +254,8 @@ export function makeHumanoid(o) {
       [0.07, 0.1, 0.05, vd, -0.16, 1.32, vz, R(0.2)], [0.012, 0.18, 0.012, 0x1a1a1a, -0.18, 1.45, -0.17 * W],
     );
     for (const x of [-0.15, 0, 0.15]) T.push([0.1, 0.13, 0.05, vd, x, 1.1, vz, R(0.2)], [0.105, 0.03, 0.055, dk(v, 0.7), x, 1.17, vz - 0.001]);
+    if (o.vestKind === 'scrap') for (const [x, y] of [[-0.2, 1.38], [0.2, 1.38], [-0.24, 1.0], [0.24, 1.0], [0.0, 1.4], [0.2, 1.24]]) T.push([0.026, 0.026, 0.014, 0xb8bcc0, x * W, y, -0.172 * W]);
+    if (o.vestKind === 'police') T.push([0.3, 0.06, 0.012, 0xe8e8e0, 0.04, 1.27, -0.173 * W], [0.3, 0.06, 0.012, 0xe8e8e0, 0, 1.25, 0.2 * W]);
   }
   if (o.pack != null) {
     // рюкзак со скаткой, лямки через плечи и грудная стяжка
@@ -326,6 +335,13 @@ export function makeHumanoid(o) {
       [0.07, 0.035, 0.012, 0x3a5a6a, -0.055, 0.345, -0.209], [0.07, 0.035, 0.012, 0x3a5a6a, 0.055, 0.345, -0.209],
     );
   }
+  if (o.hardhat) {
+    hb.push(
+      [0.39, 0.14, 0.39, 0xe0b020, 0, 0.37, 0, R(0.42, { b: 0.4, tx: 0.84, tz: 0.84 })],
+      [0.42, 0.025, 0.47, 0xd0a018, 0, 0.3, -0.025, R(0.35)],
+      [0.05, 0.03, 0.36, 0xf0c838, 0, 0.44, 0, R(0.3)],
+    );
+  }
   if (glowEyes.length) limb(head, glowEyes, true);
   limb(head, hb);
 
@@ -396,12 +412,23 @@ const SKINS = [0xf1c8a0, 0xe0ac80, 0xc68a5e, 0x8d5a3b];
 const HAIRS = [0x3a2a1a, 0x1a1410, 0x8a6a3a, 0x5a3a22, 0xb89060];
 const PACKS = [0x5a5a3e, 0x4a4036, 0x3a4a5a];
 
-export function makePlayerModel(color, skinIdx = 0) {
+// как выглядит надетая броня
+const ARMOR_LOOK = {
+  hardhat: { hardhat: true }, helmet: { helmet: 0x4a5536 },
+  jacket: { shirt: 0x5a4030, sleeve: 0x5a4030 }, scrapvest: { vest: 0x7a7f84, vestKind: 'scrap' },
+  policevest: { vest: 0x2a3440, vestKind: 'police' }, milvest: { vest: 0x55603e },
+  pants: { pants: 0x4a4436 }, greaves: { greaves: 0x7a7f84 }, kneepads: { greaves: 0x2e2e2a },
+};
+
+// look — надетая броня «голова,тело,ноги» (id предметов)
+export function makePlayerModel(color, skinIdx = 0, look = '') {
   const i = Math.abs(skinIdx | 0);
-  return makeHumanoid({
+  const o = {
     skin: SKINS[i % SKINS.length], shirt: color, pants: 0x34405a, shoes: 0x3a2a1e,
     hair: HAIRS[i % HAIRS.length], beard: i % 3 === 1, pack: PACKS[i % PACKS.length], patch: dk(color, 0.7),
-  });
+  };
+  for (const id of String(look).split(',')) if (ARMOR_LOOK[id]) Object.assign(o, ARMOR_LOOK[id]);
+  return makeHumanoid(o);
 }
 
 // внешность обычных зомби — несколько готовых вариантов (каждый строит геометрию один раз)
@@ -523,6 +550,31 @@ function ammo(g, box, band, n, bul, tip, r, h) {
     cyl(g, r, h, bul, x, 0.04 + h / 2, 0.01);
     cyl(g, r * 1.05, h * 0.12, dk(bul, 0.8), x, 0.04 + h * 0.06, 0.01);
     if (tip) part(g, r, h * 0.45, r, tip, x, 0.04 + h + h * 0.22, 0.01, 0, 0, 0, CONE8);
+  }
+}
+
+// жилет / куртка: корпус, вырез, лямки; kind — подсумки, заклёпки, надпись или рукава
+function vestModel(g, c, kind) {
+  rp(g, 0.2, 0.22, 0.08, c, 0, 0, 0, { c: 0.2 });
+  part(g, 0.07, 0.045, 0.084, 0x1c1f22, 0, 0.09, 0);
+  for (const x of [-0.07, 0.07]) rp(g, 0.05, 0.03, 0.085, c, x, 0.115, 0, { c: 0.3 });
+  if (kind === 'jacket') {
+    for (const s of [-1, 1]) rp(g, 0.06, 0.2, 0.07, c, s * 0.125, -0.01, 0, { c: 0.35, rz: s * 0.22 });
+    part(g, 0.008, 0.18, 0.084, 0x8a8e92, 0, -0.02, 0);
+    rp(g, 0.09, 0.03, 0.085, dk(c, 0.8), 0, 0.1, 0, { c: 0.4 });
+    return;
+  }
+  for (const x of [-0.06, 0, 0.06]) rp(g, 0.05, 0.06, 0.025, dk(c, 0.8), x, -0.055, -0.05, { c: 0.2 });
+  if (kind === 'scrap') for (const [x, y] of [[-0.08, 0.06], [0.08, 0.06], [-0.08, -0.09], [0.08, -0.09], [0, 0.03]]) part(g, 0.014, 0.014, 0.086, 0xb8bcc0, x, y, 0);
+  if (kind === 'police') part(g, 0.15, 0.03, 0.084, 0xe8e8e0, 0, 0.03, 0);
+}
+
+// поножи / наколенники: две пары щитков с ремешками
+function padsModel(g, c) {
+  for (const x of [-0.05, 0.05]) {
+    rp(g, 0.07, 0.07, 0.035, c, x, 0.05, 0, { c: 0.4 });
+    rp(g, 0.06, 0.12, 0.028, dk(c, 0.88), x, -0.055, 0.004, { c: 0.3 });
+    part(g, 0.074, 0.012, 0.04, STRAP, x, 0.0, 0.004);
   }
 }
 
@@ -747,6 +799,28 @@ const BUILD = {
     cyl(g, 0.028, 0.008, 0x9aa0a6, 0, 0.082, -0.3);
     for (const x of [-0.011, 0.011]) rp(g, 0.014, 0.08, 0.03, 0x666a6e, x, -0.065, -0.29, { c: 0.2, tx: 0.5, tz: 0.4, rx: Math.PI - 0.3 });
   },
+  hardhat(g) {
+    rp(g, 0.2, 0.09, 0.2, 0xe0b020, 0, 0.03, 0, { c: 0.42, b: 0.4, tx: 0.82, tz: 0.82 });
+    rp(g, 0.23, 0.014, 0.25, 0xd0a018, 0, -0.012, -0.012, { c: 0.35 });
+    rp(g, 0.03, 0.02, 0.19, 0xf0c838, 0, 0.078, 0, { c: 0.3 });
+  },
+  helmet(g) {
+    rp(g, 0.21, 0.1, 0.21, 0x4a5536, 0, 0.03, 0, { c: 0.42, b: 0.4, tx: 0.8, tz: 0.8 });
+    rp(g, 0.23, 0.018, 0.23, 0x3e472e, 0, -0.018, 0, { c: 0.35 });
+    rp(g, 0.12, 0.03, 0.03, 0x2a2a2a, 0, 0.025, -0.1, { c: 0.3 });
+    for (const x of [-0.03, 0.03]) part(g, 0.035, 0.018, 0.008, 0x3a5a6a, x, 0.025, -0.116);
+  },
+  jacket(g) { vestModel(g, 0x5a4030, 'jacket'); },
+  scrapvest(g) { vestModel(g, 0x7a7f84, 'scrap'); },
+  policevest(g) { vestModel(g, 0x2a3440, 'police'); },
+  milvest(g) { vestModel(g, 0x55603e, 'mil'); },
+  pants(g) {
+    for (const x of [-0.04, 0.04]) rp(g, 0.07, 0.22, 0.07, 0x4a4436, x, -0.03, 0, { c: 0.3 });
+    rp(g, 0.16, 0.04, 0.075, 0x3a3428, 0, 0.09, 0, { c: 0.3 });
+    for (const x of [-0.078, 0.078]) part(g, 0.012, 0.06, 0.05, 0x3a3428, x, -0.03, 0);
+  },
+  greaves(g) { padsModel(g, 0x7a7f84); },
+  kneepads(g) { padsModel(g, 0x2e2e2a); },
   a9(g) { ammo(g, 0x6a5a3a, 0xd8d0b8, 3, BRASS, COPPER, 0.008, 0.03); },
   a12(g) { ammo(g, 0xa03030, 0xe8e0d0, 3, 0xb02020, null, 0.014, 0.05); },
   a762(g) { ammo(g, 0x4a5536, 0xd8c060, 3, BRASS, COPPER, 0.008, 0.05); },

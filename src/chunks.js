@@ -24,11 +24,11 @@ function jittered(geo, amt, seed) {
 }
 
 const GEO = {
-  rocks: [0, 1, 2, 3].map(s => jittered(new THREE.IcosahedronGeometry(1, 2), 0.4, 100 + s)),
-  crowns: [0, 1, 2].map(s => jittered(new THREE.IcosahedronGeometry(1, 1), 0.3, 200 + s)),
-  cones: [0, 1].map(s => jittered(new THREE.ConeGeometry(1, 1, 10, 3), 0.16, 300 + s)),
-  bush: [0, 1].map(s => jittered(new THREE.IcosahedronGeometry(1, 1), 0.35, 400 + s)),
-  trunk: jittered(new THREE.CylinderGeometry(0.75, 1, 1, 9, 3), 0.08, 500),
+  rocks: [0, 1, 2, 3].map(s => jittered(new THREE.IcosahedronGeometry(1, 3), 0.4, 100 + s)),
+  crowns: [0, 1, 2].map(s => jittered(new THREE.IcosahedronGeometry(1, 2), 0.3, 200 + s)),
+  cones: [0, 1].map(s => jittered(new THREE.ConeGeometry(1, 1, 14, 4), 0.16, 300 + s)),
+  bush: [0, 1].map(s => jittered(new THREE.IcosahedronGeometry(1, 2), 0.35, 400 + s)),
+  trunk: jittered(new THREE.CylinderGeometry(0.75, 1, 1, 12, 5), 0.08, 500),
 };
 
 export class ChunkRenderer {
@@ -36,9 +36,10 @@ export class ChunkRenderer {
     this.g = game;
     this.world = game.world;
     this.live = new Map();
-    this.matTerrain = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true }), 3.2, 0.11);
-    this.matObj = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true }), 6, 0.07);
-    this.matGlass = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.38, depthWrite: false });
+    // геометрия чанков без нормалей (MeshBuilder flat) — нормаль грани считает видеокарта
+    this.matTerrain = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 3.2, 0.11);
+    this.matObj = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 6, 0.07);
+    this.matGlass = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, transparent: true, opacity: 0.38, depthWrite: false });
     this.group = new THREE.Group();
     game.scene.add(this.group);
     this.cols = {};
@@ -90,7 +91,7 @@ export class ChunkRenderer {
     const w = this.world;
     const d = w.chunk(cx, cz);
     const ch = { meshes: [], cx, cz };
-    const tb = new MeshBuilder();
+    const tb = new MeshBuilder(0, true);
     this.buildTerrain(tb, cx, cz);
     const terrain = new THREE.Mesh(tb.build(), this.matTerrain);
     terrain.receiveShadow = true;
@@ -102,7 +103,7 @@ export class ChunkRenderer {
   }
 
   buildObjects(ch, d) {
-    const ob = new MeshBuilder(0.16), gb = new MeshBuilder();
+    const ob = new MeshBuilder(0.16, true), gb = new MeshBuilder(0, true);
     for (const t of d.trees) if (!this.world.depleted.has(t.id)) this.addTree(ob, t);
     for (const r of d.rocks) if (!this.world.depleted.has(r.id)) this.addRock(ob, r);
     for (const b of d.bushes) if (!this.world.depleted.has(b.id)) this.addBush(ob, b);
@@ -292,8 +293,13 @@ export class ChunkRenderer {
         const tx = x + Math.cos(a) * 0.38, tz = z + Math.sin(a) * 0.38;
         const px = -Math.sin(a) * 0.08, pz = Math.cos(a) * 0.08;
         const hh = 0.42 + r * 0.38 + (k & 1) * 0.1;
-        mb.tri(bx - px, h - 0.05, bz - pz, bx + px, h - 0.05, bz + pz, tx, h + hh, tz, col);
-        mb.tri(bx + px, h - 0.05, bz + pz, bx - px, h - 0.05, bz - pz, tx, h + hh, tz, shade(col, 0.85));
+        // изогнутая травинка: нижний сегмент почти вертикален, верхний клонится наружу
+        const mx = x + Math.cos(a) * 0.17, mz = z + Math.sin(a) * 0.17, my = h + hh * 0.55;
+        const back = shade(col, 0.85);
+        mb.quad(bx - px, h - 0.05, bz - pz, bx + px, h - 0.05, bz + pz, mx + px * 0.6, my, mz + pz * 0.6, mx - px * 0.6, my, mz - pz * 0.6, col);
+        mb.tri(mx - px * 0.6, my, mz - pz * 0.6, mx + px * 0.6, my, mz + pz * 0.6, tx, h + hh, tz, col);
+        mb.quad(bx + px, h - 0.05, bz + pz, bx - px, h - 0.05, bz - pz, mx - px * 0.6, my, mz - pz * 0.6, mx + px * 0.6, my, mz + pz * 0.6, back);
+        mb.tri(mx + px * 0.6, my, mz + pz * 0.6, mx - px * 0.6, my, mz - pz * 0.6, tx, h + hh, tz, back);
       }
       if (bio === 'forest' && r > 0.82) {
         const fc = flowers[Math.floor(rnd() * flowers.length)];
@@ -308,7 +314,7 @@ export class ChunkRenderer {
       const bb = b.bb;
       const target = b.glass ? gb : mb;
       const tall = bb[4] - bb[1] > 1.1 && !b.glass && !b.cont && Math.min(bb[3] - bb[0], bb[5] - bb[2]) < 0.5;
-      if (tall) target.boxBanded(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), 0.42);
+      if (tall) target.boxBanded(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), 0.21);
       else target.box(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), true);
       if (b.cont) {
         // тёмная «дверца» контейнера сверху, чтобы читалось как мебель

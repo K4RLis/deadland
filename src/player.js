@@ -114,6 +114,8 @@ export class Player {
 
   damage(n, src, silent) {
     if (!this.alive || n <= 0) return;
+    // часть урона от зомби забирает броня
+    if (src === 'zombie') n = this.g.armorAbsorb(n);
     this.hp -= n;
     if (!silent) { this.dmgFlash = Math.min(1, this.dmgFlash + n / 25); this.g.sfx.hurt(); }
     if (this.hp <= 0) { this.hp = 0; this.alive = false; this.g.onLocalDeath(src); }

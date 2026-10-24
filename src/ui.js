@@ -1,7 +1,7 @@
 // Интерфейс: HUD, инвентарь с перетаскиванием, крафт, контейнеры, карта, чат, пауза.
 import * as C from './config.js';
-import { ITEMS, RECIPES, CAT_NAMES, STATION_NAMES, QUESTS, xpNeed } from './items.js';
-import { HOTBAR, INV_SIZE } from './inventory.js';
+import { ITEMS, RECIPES, CAT_NAMES, STATION_NAMES, QUESTS, SLOT_NAMES, xpNeed } from './items.js';
+import { HOTBAR, INV_SIZE, ARMOR_AT, TOTAL } from './inventory.js';
 import { BLOCK_TYPES } from './blocks.js';
 import { ZTYPES } from './zombies.js';
 
@@ -260,6 +260,7 @@ export class UI {
     let h = `<img src="${this.icons[it.id] || ''}">`;
     if (key) h += `<span class="k">${key}</span>`;
     if (def.cat === 'gun') h += `<span class="n">${it.ammo}</span><span class="am"><i style="width:${Math.round(it.ammo / def.mag * 100)}%"></i></span>`;
+    else if (def.cat === 'armor') h += `<span class="am dur"><i style="width:${Math.round(Math.max(0, (it.dur ?? def.dur) / def.dur) * 100)}%"></i></span>`;
     else if (it.n > 1) h += `<span class="n">${it.n}</span>`;
     return h;
   }
@@ -287,9 +288,11 @@ export class UI {
     this.hudT -= dt;
     // полосы — каждый кадр
     const bars = $('stats').querySelectorAll('.sb i');
-    const vals = [P.hp / P.maxHp, P.stamina / P.perks.stamina, P.food / 100, P.water / 100];
+    const arm = g.inv.armorBar();
+    const vals = [P.hp / P.maxHp, P.stamina / P.perks.stamina, P.food / 100, P.water / 100, arm];
     bars.forEach((b, i) => { b.style.width = Math.max(0, Math.min(100, vals[i] * 100)) + '%'; });
     const st = $('stats').children;
+    st[4].style.display = arm > 0 ? '' : 'none';
     for (let i = 0; i < 4; i++) st[i].classList.toggle('low', vals[i] < 0.2);
     const W = g.weapons;
     const ub = $('usebar');
@@ -380,7 +383,17 @@ export class UI {
       gr.appendChild(s);
       this.invSlots.push(s);
     }
-    for (const el of [$('inv-grid'), $('cont-grid')]) {
+    // слоты брони — в колонке выжившего
+    const ag = $('inv-armor');
+    ag.innerHTML = '';
+    for (const k of ['head', 'body', 'legs']) {
+      const s = document.createElement('div');
+      s.className = 'slot arm';
+      s.dataset.src = 'inv'; s.dataset.i = ARMOR_AT[k]; s.dataset.label = SLOT_NAMES[k];
+      ag.appendChild(s);
+      this.invSlots[ARMOR_AT[k]] = s;
+    }
+    for (const el of [$('inv-grid'), $('cont-grid'), ag]) {
       el.addEventListener('pointerdown', e => this.onDragStart(e));
       el.addEventListener('pointermove', e => this.onHover(e));
       el.addEventListener('pointerleave', () => { this.hover = null; $('tooltip').classList.add('hidden'); });
@@ -426,7 +439,7 @@ export class UI {
     const g = this.g;
     if (!g) return;
     if (this.picked != null && !g.inv.slots[this.picked]) this.setPicked(null);
-    for (let i = 0; i < INV_SIZE; i++) {
+    for (let i = 0; i < TOTAL; i++) {
       const s = this.invSlots[i];
       s.innerHTML = this.slotHTML(g.inv.slots[i], i < HOTBAR ? i + 1 : '');
       s.classList.toggle('sel', i === g.player.sel);
@@ -448,10 +461,10 @@ export class UI {
 
   renderCraft() {
     const g = this.g, P = g.player;
-    const TABS = [['all', 'Все'], ['can', 'Можно создать'], ['tools', 'Инструменты'], ['weap', 'Оружие'], ['build', 'Постройки'], ['food', 'Еда'], ['mat', 'Материалы']];
+    const TABS = [['all', 'Все'], ['can', 'Можно создать'], ['tools', 'Инструменты'], ['weap', 'Оружие'], ['armor', 'Броня'], ['build', 'Постройки'], ['food', 'Еда'], ['mat', 'Материалы']];
     const tabOf = id => {
       const c = ITEMS[id].cat;
-      return c === 'melee' ? 'tools' : c === 'gun' || c === 'ammo' ? 'weap' : c === 'block' ? 'build' : c === 'food' || c === 'med' ? 'food' : 'mat';
+      return c === 'melee' ? 'tools' : c === 'gun' || c === 'ammo' ? 'weap' : c === 'armor' ? 'armor' : c === 'block' ? 'build' : c === 'food' || c === 'med' ? 'food' : 'mat';
     };
     $('craft-tabs').innerHTML = TABS.map(([k, n]) => `<button class="btn small${this.craftTab === k ? ' on' : ''}" data-tab="${k}">${n}</button>`).join('');
     const q = $('craft-search').value.trim().toLowerCase();
@@ -499,6 +512,7 @@ export class UI {
       <div class="xpbar" style="margin:6px 0 12px"><i style="width:${Math.min(100, P.xp / need * 100)}%"></i></div>
       <div class="kv">Опыт <b>${Math.floor(P.xp)} / ${need}</b></div>
       <div class="kv">Здоровье <b>${Math.ceil(P.hp)} / ${pk.maxHp}</b></div>
+      <div class="kv">Защита брони <b>${Math.round(g.inv.armor() * 100)}%</b></div>
       <div class="kv">Сытость <b>${Math.ceil(P.food)}%</b></div>
       <div class="kv">Вода <b>${Math.ceil(P.water)}%</b></div>
       <div class="kv">Урон в ближнем бою <b>+${Math.round((pk.melee - 1) * 100)}%</b></div>
@@ -559,7 +573,7 @@ export class UI {
     const inCont = el && el.closest('#cont-box');
     const inPanel = el && el.closest('.inv-col');
     if (d.src === 'inv') {
-      if (s && s.dataset.src === 'inv') { g.inv.move(d.i, +s.dataset.i); this.sfx.click(); }
+      if (s && s.dataset.src === 'inv') this.moveInv(d.i, +s.dataset.i);
       else if (inCont && this.contCid) g.putToContainer(this.contCid, d.i);
       else if (!inPanel) g.dropFromInv(d.i);
     } else if (d.src === 'cont') {
@@ -580,7 +594,7 @@ export class UI {
     this.lastClick = { i, t: now };
     if (dbl && it && !shift && !ctrl) { this.lastClick.i = -1; this.setPicked(null); g.quickUse(i); return; }
     if (this.picked != null) {
-      if (this.picked !== i) { inv.move(this.picked, i); this.sfx.click(); }
+      if (this.picked !== i) this.moveInv(this.picked, i);
       this.setPicked(null);
       return;
     }
@@ -590,10 +604,18 @@ export class UI {
     this.setPicked(i);
   }
 
-  // Shift+клик: в контейнер, а без контейнера — между хотбаром и рюкзаком
+  // перемещение в инвентаре; в слот брони подходит только броня для этого места
+  moveInv(a, b) {
+    if (this.g.inv.move(a, b)) { this.sfx.click(); return true; }
+    this.toast('Сюда надевается только подходящая броня');
+    return false;
+  }
+
+  // Shift+клик: в контейнер, а без контейнера — между хотбаром и рюкзаком (броню — надеть или снять)
   quickTransfer(i) {
     const g = this.g, inv = g.inv;
     if (this.contCid) { g.putToContainer(this.contCid, i); return; }
+    if (ITEMS[inv.slots[i].id].cat === 'armor') { g.quickUse(i); return; }
     const t = i < HOTBAR ? inv.target(inv.slots[i].id, HOTBAR, INV_SIZE) : inv.target(inv.slots[i].id, 0, HOTBAR);
     if (t < 0) { this.toast(i < HOTBAR ? 'Рюкзак полон' : 'Хотбар полон'); return; }
     inv.move(i, t);
@@ -606,7 +628,7 @@ export class UI {
     if (!h || this.typingInField()) return;
     for (let k = 0; k < HOTBAR; k++) {
       if (!pressed.has('Digit' + (k + 1))) continue;
-      if (h.src === 'inv') { if (g.inv.slots[h.i] && h.i !== k) { g.inv.move(h.i, k); this.sfx.click(); } }
+      if (h.src === 'inv') { if (g.inv.slots[h.i] && h.i !== k) this.moveInv(h.i, k); }
       else if (this.contItems[h.i]) g.takeFromContainer(this.contCid, h.i, this.contItems[h.i]);
     }
     if (pressed.has('KeyQ') && h.src === 'inv' && g.inv.slots[h.i]) { if (this.picked === h.i) this.setPicked(null); g.dropFromInv(h.i); }
@@ -636,13 +658,14 @@ export class UI {
     let h = `<b>${esc(def.name)}${it.n > 1 ? ' ×' + it.n : ''}</b><div class="c">${CAT_NAMES[def.cat] || ''}</div>`;
     if (def.cat === 'gun') h += `Урон ${def.dmg}${def.pellets ? '×' + def.pellets : ''} · магазин ${def.mag}<br>Патроны: ${esc(ITEMS[def.ammo].name)}<br>В магазине: ${it.ammo}`;
     else if (def.cat === 'melee') h += `Урон ${def.dmg}`;
+    else if (def.cat === 'armor') h += `${SLOT_NAMES[def.slot]} · защита ${Math.round(def.armor * 100)}%<br>Прочность ${Math.ceil(Math.max(0, it.dur ?? def.dur))} / ${def.dur}`;
     else if (def.cat === 'food') h += [def.food ? `Сытость ${def.food > 0 ? '+' : ''}${def.food}` : '', def.water ? `Вода ${def.water > 0 ? '+' : ''}${def.water}` : '', def.heal ? `Здоровье +${def.heal}` : ''].filter(Boolean).join(' · ');
     else if (def.cat === 'med') h += `Лечит ${def.heal}`;
     else if (def.cat === 'block') h += `Прочность ${BLOCK_TYPES[def.block].hp}. Возьми в руки, ЛКМ — поставить, R — повернуть.`;
     if (def.desc) h += `<br>${esc(def.desc)}`;
     const keys = s.dataset.src === 'cont'
       ? 'клик или 1–8 — забрать'
-      : (def.cat === 'food' || def.cat === 'med' ? 'ПКМ или двойной клик — использовать · ' : '') + '1–8 — в хотбар · Q — выбросить · Shift+клик — переложить' + (it.n > 1 ? ' · Ctrl+клик — разделить' : '');
+      : (def.cat === 'food' || def.cat === 'med' ? 'ПКМ или двойной клик — использовать · ' : def.cat === 'armor' ? (+s.dataset.i >= INV_SIZE ? 'ПКМ, двойной клик или Shift+клик — снять · ' : 'ПКМ, двойной клик или Shift+клик — надеть · ') : '') + '1–8 — в хотбар · Q — выбросить · Shift+клик — переложить' + (it.n > 1 ? ' · Ctrl+клик — разделить' : '');
     h += `<div class="keys">${keys}</div>`;
     tip.innerHTML = h;
     tip.dataset.key = s.dataset.src + s.dataset.i + it.id + it.n;

@@ -20,8 +20,10 @@ const _v = new THREE.Vector3();
 const _rm = new THREE.Matrix4(), _re = new THREE.Euler();
 
 export class MeshBuilder {
-  // facet — разброс яркости между треугольниками: гранёный «полигональный» вид
-  constructor(facet = 0) { this.p = []; this.n = []; this.c = []; this.facet = facet; this.k = 0; }
+  // facet — разброс яркости между треугольниками: гранёный «полигональный» вид.
+  // flat — без нормалей и с компактными цветами (вдвое меньше памяти); материал тогда нужен с flatShading:
+  // нормаль грани видеокарта считает сама
+  constructor(facet = 0, flat = false) { this.p = []; this.n = []; this.c = []; this.facet = facet; this.k = 0; this.flat = flat; }
   get empty() { return this.p.length === 0; }
 
   tri(ax, ay, az, bx, by, bz, cx, cy, cz, col) {
@@ -31,7 +33,7 @@ export class MeshBuilder {
     const l = Math.hypot(nx, ny, nz) || 1;
     nx /= l; ny /= l; nz /= l;
     this.p.push(ax, ay, az, bx, by, bz, cx, cy, cz);
-    this.n.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
+    if (!this.flat) this.n.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
     let f = 1;
     if (this.facet) {
       let h = Math.imul(++this.k ^ 0x9e3779b9, 2654435761);
@@ -88,12 +90,20 @@ export class MeshBuilder {
       const hw = w / 2 - ins, hd = d / 2 - ins;
       let pts;
       if (c > 1e-5) {
+        // углы скруглены дугой из трёх точек (0°, 45°, 90°)
         const k = Math.max(c * 0.3, c - ins * 0.414);
-        pts = [[hw - k, -hd], [hw, -hd + k], [hw, hd - k], [hw - k, hd], [-hw + k, hd], [-hw, hd - k], [-hw, -hd + k], [-hw + k, -hd]];
+        pts = [];
+        for (const [cx2, cz2, a0] of [[hw - k, -hd + k, -Math.PI / 2], [hw - k, hd - k, 0], [-hw + k, hd - k, Math.PI / 2], [-hw + k, -hd + k, Math.PI]]) {
+          for (let q = 0; q < 3; q++) { const a = a0 + q * Math.PI / 4; pts.push([cx2 + Math.cos(a) * k, cz2 + Math.sin(a) * k]); }
+        }
       } else pts = [[hw, -hd], [hw, hd], [-hw, hd], [-hw, -hd]];
       return pts.map(([x, z]) => [x * sx, y, z * sz]);
     };
-    const ys = bv > 1e-4 ? [[-h / 2, bv], [-h / 2 + bv, 0], [h / 2 - bv, 0], [h / 2, bv]] : [[-h / 2, 0], [h / 2, 0]];
+    // торцы скруглены четвертью окружности: кольца на 0°, 45° и 90°
+    const q = 1 - Math.SQRT1_2;
+    const ys = bv > 1e-4
+      ? [[-h / 2, bv], [-h / 2 + bv * q, bv * q], [-h / 2 + bv, 0], [h / 2 - bv, 0], [h / 2 - bv * q, bv * q], [h / 2, bv]]
+      : [[-h / 2, 0], [h / 2, 0]];
     let rot = null;
     if (o.rx || o.ry || o.rz) { _re.set(o.rx || 0, o.ry || 0, o.rz || 0); rot = _rm.makeRotationFromEuler(_re); }
     const R = ys.map(([y, ins]) => ring(y, ins).map(p => {
@@ -128,7 +138,7 @@ export class MeshBuilder {
   // треугольная призма (двускатная крыша) с рядами черепицы
   prism(x0, y0, z0, x1, y1, z1, col, ridgeX) {
     const s = shade(col, 0.9);
-    const R = 5;
+    const R = 10;
     if (ridgeX) {
       const zm = (z0 + z1) / 2;
       for (let k = 0; k < R; k++) {
@@ -194,8 +204,14 @@ export class MeshBuilder {
   build() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
+    if (this.flat) {
+      const c = new Uint16Array(this.c.length);
+      for (let i = 0; i < c.length; i++) c[i] = Math.min(65535, Math.round(this.c[i] * 65535));
+      g.setAttribute('color', new THREE.BufferAttribute(c, 3, true));
+    } else {
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
+    }
     g.computeBoundingSphere();
     return g;
   }
@@ -233,12 +249,12 @@ export function addSurfaceDetail(material, scale = 3, amp = 0.09) {
 
 // Общие неиндексированные примитивы
 export const PRIM = {
-  cone6: new THREE.ConeGeometry(1, 1, 6, 1).toNonIndexed(),
+  cone6: new THREE.ConeGeometry(1, 1, 9, 2).toNonIndexed(),
   cone5: new THREE.ConeGeometry(1, 1, 5, 1).toNonIndexed(),
   cyl5: new THREE.CylinderGeometry(1, 1, 1, 5, 1).toNonIndexed(),
   cyl6: new THREE.CylinderGeometry(1, 1, 1, 6, 1).toNonIndexed(),
-  cyl8: new THREE.CylinderGeometry(1, 1, 1, 8, 1).toNonIndexed(),
-  ico: new THREE.IcosahedronGeometry(1, 0),
+  cyl8: new THREE.CylinderGeometry(1, 1, 1, 12, 2).toNonIndexed(),
+  ico: new THREE.IcosahedronGeometry(1, 1),
   dodeca: new THREE.DodecahedronGeometry(1, 0),
   box: new THREE.BoxGeometry(1, 1, 1).toNonIndexed(),
 };
