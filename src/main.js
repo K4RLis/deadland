@@ -97,6 +97,25 @@ function menuFrame(dt) {
 
 // ---------- меню ----------
 $('m-ver').textContent = 'версия ' + C.VERSION + ' · мир 3000×3000 м · до ' + C.MAX_PLAYERS + ' игроков';
+
+// ---------- автообновление ----------
+// GitHub Pages разрешает браузеру держать файлы в кэше 10 минут, и после выхода новой версии игра может
+// собраться из старых файлов. В меню сверяем версию с сервером; если она новее — перекачиваем все файлы
+// игры в кэш и перезагружаем страницу (один раз на версию, чтобы не зациклиться, пока CDN отдаёт старое).
+async function checkUpdate() {
+  try {
+    const r = await fetch('src/config.js?t=' + Date.now(), { cache: 'no-store' });
+    const m = (await r.text()).match(/VERSION = '([^']+)'/);
+    if (!m || m[1] === C.VERSION || sessionStorage.getItem(SAVE + 'upd') === m[1]) return;
+    sessionStorage.setItem(SAVE + 'upd', m[1]);
+    $('m-ver').textContent = 'обновление до версии ' + m[1] + '…';
+    const own = performance.getEntriesByType('resource').map(e => e.name).filter(u => u.startsWith(location.origin));
+    const files = [...new Set([location.href.split('#')[0], ...own])];
+    await Promise.all(files.map(u => fetch(u, { cache: 'reload' }).catch(() => null)));
+    if (!game) location.reload();
+  } catch (_) { /* нет сети — играем в том, что есть */ }
+}
+setTimeout(checkUpdate, 1500);
 const nameInput = $('m-name');
 nameInput.value = prof.name;
 nameInput.addEventListener('input', () => { prof.name = nameInput.value.trim().slice(0, 16) || 'Выживший'; saveProfile(); });
@@ -187,6 +206,11 @@ $('m-new').onclick = () => {
 };
 $('m-continue').onclick = () => { const sv = loadWorldSave(); if (sv) startHost(C.makeLevel(sv.diff || 'normal'), true); };
 // тестовый мир хранится отдельно и продолжается, если уже был создан
+if (!$('m-test')) {
+  const b = document.createElement('button');
+  b.className = 'btn'; b.id = 'm-test'; b.textContent = 'Тестовый мир ∞';
+  $('m-continue').after(b);
+}
 $('m-test').onclick = () => {
   let sv = null;
   try { sv = JSON.parse(localStorage.getItem(SAVE + 'world:test') || 'null'); } catch (_) { sv = null; }
