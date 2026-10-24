@@ -52,7 +52,16 @@ function wallX(P, x0, x1, z, y0, y1, c, ops = []) {
     if (o.a > cur) bx(P, cur, y0, z - TH / 2, o.a, y1, z + TH / 2, c);
     if (o.lo > y0) bx(P, o.a, y0, z - TH / 2, o.b, o.lo, z + TH / 2, c);
     if (o.hi < y1) bx(P, o.a, o.hi, z - TH / 2, o.b, y1, z + TH / 2, c);
-    if (o.glass) bx(P, o.a, o.lo, z - 0.03, o.b, o.hi, z + 0.03, 'glass', GLASS);
+    if (o.glass) {
+      bx(P, o.a, o.lo, z - 0.03, o.b, o.hi, z + 0.03, 'glass', GLASS);
+      bx(P, o.a - 0.08, o.lo - 0.07, z - TH / 2 - 0.07, o.b + 0.08, o.lo, z + TH / 2 + 0.07, 'trim', NOSOLID);
+      bx(P, o.a - 0.06, o.hi, z - TH / 2 - 0.03, o.b + 0.06, o.hi + 0.09, z + TH / 2 + 0.03, 'trim', NOSOLID);
+      bx(P, (o.a + o.b) / 2 - 0.025, o.lo, z - 0.05, (o.a + o.b) / 2 + 0.025, o.hi, z + 0.05, 'trim', NOSOLID);
+    } else if (o.lo <= y0 + 0.01 && o.hi < y1) {
+      bx(P, o.a - 0.09, y0, z - TH / 2 - 0.04, o.a, o.hi + 0.09, z + TH / 2 + 0.04, 'trim', NOSOLID);
+      bx(P, o.b, y0, z - TH / 2 - 0.04, o.b + 0.09, o.hi + 0.09, z + TH / 2 + 0.04, 'trim', NOSOLID);
+      bx(P, o.a - 0.09, o.hi, z - TH / 2 - 0.04, o.b + 0.09, o.hi + 0.09, z + TH / 2 + 0.04, 'trim', NOSOLID);
+    }
     cur = o.b;
   }
   if (cur < x1) bx(P, cur, y0, z - TH / 2, x1, y1, z + TH / 2, c);
@@ -65,7 +74,12 @@ function wallZ(P, z0, z1, x, y0, y1, c, ops = []) {
     if (o.a > cur) bx(P, x - TH / 2, y0, cur, x + TH / 2, y1, o.a, c);
     if (o.lo > y0) bx(P, x - TH / 2, y0, o.a, x + TH / 2, o.lo, o.b, c);
     if (o.hi < y1) bx(P, x - TH / 2, o.hi, o.a, x + TH / 2, y1, o.b, c);
-    if (o.glass) bx(P, x - 0.03, o.lo, o.a, x + 0.03, o.hi, o.b, 'glass', GLASS);
+    if (o.glass) {
+      bx(P, x - 0.03, o.lo, o.a, x + 0.03, o.hi, o.b, 'glass', GLASS);
+      bx(P, x - TH / 2 - 0.07, o.lo - 0.07, o.a - 0.08, x + TH / 2 + 0.07, o.lo, o.b + 0.08, 'trim', NOSOLID);
+      bx(P, x - TH / 2 - 0.03, o.hi, o.a - 0.06, x + TH / 2 + 0.03, o.hi + 0.09, o.b + 0.06, 'trim', NOSOLID);
+      bx(P, x - 0.05, o.lo, (o.a + o.b) / 2 - 0.025, x + 0.05, o.hi, (o.a + o.b) / 2 + 0.025, 'trim', NOSOLID);
+    }
     cur = o.b;
   }
   if (cur < z1) bx(P, x - TH / 2, y0, cur, x + TH / 2, y1, z1, c);
@@ -147,9 +161,20 @@ function shell(P, o) {
       } else {
         const ridgeX = w >= d;
         const rh = Math.min(w, d) * 0.33;
+        bx(P, -hw - 0.4, top - 0.08, -hd - 0.4, hw + 0.4, top + 0.02, hd + 0.4, 'trim', NOSOLID);
         prism(P, -hw - 0.35, top, -hd - 0.35, hw + 0.35, top + rh, hd + 0.35, 'roof', ridgeX);
+        const cx0 = ridgeX ? hw * 0.45 : hw * 0.25, cz0 = ridgeX ? -hd * 0.25 : hd * 0.45;
+        bx(P, cx0 - 0.3, top + rh * 0.3, cz0 - 0.3, cx0 + 0.3, top + rh + 0.7, cz0 + 0.3, 'brick', NOSOLID);
+        bx(P, cx0 - 0.36, top + rh + 0.7, cz0 - 0.36, cx0 + 0.36, top + rh + 0.82, cz0 + 0.36, 'brick', NOSOLID);
       }
     }
+  }
+  // угловые пилястры
+  const yt = top || 0.2 + floors * fh;
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const xa = sx < 0 ? -hw - 0.06 : hw - 0.12, xb = sx < 0 ? -hw + 0.12 : hw + 0.06;
+    const za = sz < 0 ? -hd - 0.06 : hd - 0.12, zb = sz < 0 ? -hd + 0.12 : hd + 0.06;
+    bx(P, xa, 0.2, za, xb, yt, zb, 'trim', NOSOLID);
   }
   return { w, d, hw, hd, floorY, holes, fh, doorX, doorW, top };
 }
@@ -214,7 +239,7 @@ function pal(rng, L, over = {}) {
     wall: pick(L.biome === 'desert' ? DESERT_WALLS : WALLS, rng), trim: 0xefeae0,
     roof: snow ? 0xf0f4f7 : pick(ROOFS, rng), floor: 0x8f6c49, stairs: 0x7a5a3c, found: 0x8b8680,
     ceil: 0xd8d4cc, glass: 0x9ccbe0, metal: 0x6f777e, dark: 0x2b2b2b, sign: pick(SIGNS, rng),
-    white: 0xf2f2ee, red: 0xd03030, concrete: 0x9a9a96, mil: 0x5f6b45, mil2: 0x4a5536,
+    white: 0xf2f2ee, red: 0xd03030, concrete: 0x9a9a96, mil: 0x5f6b45, mil2: 0x4a5536, brick: 0x8a4a3a,
     tent: snow ? 0xd9ddd5 : 0x6b7a4f, body: pick(CARS, rng), heli: 0x4d5a3c, scorch: 0x2a2622,
     fence: 0x7d8a7a, sand: 0xbca77a, yellow: 0xe8c547, blue: 0x1f4e9c,
     ...over,
@@ -435,9 +460,10 @@ const P_ = {
   },
 };
 
-export function buildPrefab(name, rng, level) {
+// biome — биом места постройки: от него зависят цвета стен и снег на крышах
+export function buildPrefab(name, rng, biome) {
   const f = P_[name];
   if (!f) throw new Error('Неизвестный префаб ' + name);
-  const r = f(rng, level);
+  const r = f(rng, { biome });
   return { parts: r.P, conts: r.C, pal: r.pal };
 }

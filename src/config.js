@@ -1,66 +1,79 @@
-// Общие константы игры и описание уровней (карт).
-export const VERSION = '1.0.0';
+// Общие константы игры, биомы острова и уровни сложности.
+export const VERSION = '1.2.0';
 export const NET_PREFIX = 'mkrai-v1-';
 
 export const WORLD_SIZE = 3000;          // метров по каждой стороне
 export const HALF = WORLD_SIZE / 2;
 export const CHUNK = 100;                // размер чанка, м
-export const TSTEP = 4;                  // шаг сетки рельефа, м
-export const SEG = CHUNK / TSTEP;
+export const SEG = 32;                   // треугольников по стороне чанка (×2)
+export const TSTEP = CHUNK / SEG;        // шаг сетки рельефа, м
 export const SEA = 0;                    // уровень воды
 export const BLOCK = 2;                  // размер строительного блока, м
 export const MAX_PLAYERS = 10;
-export const DAY_SECONDS = 1440;         // 24 минуты = игровые сутки
+export const DAY_SECONDS = 1200;         // 20 минут = игровые сутки
+export const SUNRISE = 0.22;             // доли суток: рассвет и закат
+export const SUNSET = 0.84;
 export const HORDE_EVERY = 7;            // кровавая луна каждую 7-ю ночь
 export const GRAVITY = 20;
+export const WORLD_ID = 'island';
+export const WORLD_SEED = 74121;
 
-export const LEVELS = [
-  {
-    id: 'valley', name: 'Зелёная долина', tag: 'Уровень 1', difficulty: 1, seed: 74121,
-    desc: 'Хвойные леса, озёра и тихие деревни. Зомби медленные, еды хватает. Лучшее место, чтобы начать.',
-    biome: 'forest',
+// Биомы одного большого острова: север — снега, центр — леса, юг — пустыня.
+// danger — уровень опасности зоны: сильнее зомби, но и лут лучше.
+export const BIOMES = {
+  forest: {
+    name: 'Лес', danger: 1,
     colors: {
       grass: 0x6fa54c, grass2: 0x5f9842, dirt: 0x8d6b45, sand: 0xd9c98f, rock: 0x8b8b88, snow: 0xf2f5f7,
-      road: 0x4b4b4d, town: 0x85807a, water: 0x3f86bf, seabed: 0xb8a675,
+      road: 0x4b4b4d, town: 0x85807a, seabed: 0xb8a675,
     },
-    sky: { day: 0x9fcff0, dusk: 0xe9a374, night: 0x0c1526 },
+    sky: { day: 0x9fcff0, zenith: 0x5a9ad8, dusk: 0xe9a374, night: 0x0c1526 },
     trees: { density: 1.0, types: ['pine', 'pine', 'oak', 'birch'] },
-    mountains: 0.85, snowLine: 70, towns: 12, cityR: 150, cabins: 34,
+    mountains: 0.85, snowLine: 70,
     zombie: { count: 8, hp: 1.0, dmg: 1.0, speed: 1.0, runner: 0.07, tank: 0.03, soldier: 0.02 },
-    loot: 1.25,
+    loot: 1.15,
   },
-  {
-    id: 'wastes', name: 'Выжженные земли', tag: 'Уровень 2', difficulty: 2, seed: 99173,
-    desc: 'Пустыня, столовые горы и брошенные блокпосты. Бегуны встречаются чаще, воды мало.',
-    biome: 'desert',
+  desert: {
+    name: 'Пустыня', danger: 2,
     colors: {
       grass: 0xcfae69, grass2: 0xc4a15c, dirt: 0xa5744c, sand: 0xe2cb90, rock: 0xb3734b, snow: 0xe9d3b3,
-      road: 0x524c48, town: 0x948572, water: 0x3f93ab, seabed: 0xcdb07a,
+      road: 0x524c48, town: 0x948572, seabed: 0xcdb07a,
     },
-    sky: { day: 0xc4dbe9, dusk: 0xf0a362, night: 0x130f1d },
+    sky: { day: 0xc4dbe9, zenith: 0x6aa0d0, dusk: 0xf0a362, night: 0x130f1d },
     trees: { density: 0.22, types: ['cactus', 'cactus', 'dead', 'palm'] },
-    mountains: 1.15, snowLine: 999, towns: 11, cityR: 150, cabins: 26,
+    mountains: 1.0, snowLine: 999,
     zombie: { count: 11, hp: 1.25, dmg: 1.2, speed: 1.1, runner: 0.2, tank: 0.06, soldier: 0.06 },
-    loot: 1.0,
+    loot: 1.1,
   },
-  {
-    id: 'winter', name: 'Мёртвая зима', tag: 'Уровень 3', difficulty: 3, seed: 31337,
-    desc: 'Заснеженные горы и огромный мёртвый город. Танки, орды и мало патронов. Только для опытных.',
-    biome: 'snow',
+  snow: {
+    name: 'Снега', danger: 3,
     colors: {
       grass: 0xe9eff3, grass2: 0xdbe4eb, dirt: 0x8b7b6b, sand: 0xc9c1b1, rock: 0x6f7780, snow: 0xffffff,
-      road: 0x3f4145, town: 0x9b9fa5, water: 0x2f6283, seabed: 0x8b8b81,
+      road: 0x3f4145, town: 0x9b9fa5, seabed: 0x8b8b81,
     },
-    sky: { day: 0xc9d5df, dusk: 0xb9a1b1, night: 0x080c15 },
+    sky: { day: 0xc9d5df, zenith: 0x7a9cc0, dusk: 0xb9a1b1, night: 0x080c15 },
     trees: { density: 0.9, types: ['snowpine', 'snowpine', 'pine', 'dead'] },
-    mountains: 1.5, snowLine: 18, towns: 12, cityR: 250, cabins: 30,
-    zombie: { count: 14, hp: 1.6, dmg: 1.5, speed: 1.15, runner: 0.25, tank: 0.1, soldier: 0.08 },
-    loot: 0.8,
+    mountains: 1.5, snowLine: -999,
+    zombie: { count: 13, hp: 1.55, dmg: 1.4, speed: 1.12, runner: 0.24, tank: 0.1, soldier: 0.08 },
+    loot: 1.3,
   },
+};
+export const BIOME_IDS = ['forest', 'desert', 'snow'];
+export const WATER_COLOR = 0x3f86bf;
+
+export const DIFFICULTIES = [
+  { id: 'easy', name: 'Лёгкая', level: 1, desc: 'Меньше зомби, они слабее. Лута больше.', zombie: { count: 0.75, hp: 0.8, dmg: 0.7, speed: 0.95 }, loot: 1.3 },
+  { id: 'normal', name: 'Нормальная', level: 2, desc: 'Как задумано.', zombie: { count: 1, hp: 1, dmg: 1, speed: 1 }, loot: 1 },
+  { id: 'hard', name: 'Тяжёлая', level: 3, desc: 'Больше зомби, они злее и быстрее. Лута меньше.', zombie: { count: 1.35, hp: 1.3, dmg: 1.35, speed: 1.08 }, loot: 0.85 },
 ];
 
-export function levelById(id) {
-  return LEVELS.find(l => l.id === id) || LEVELS[0];
+// описание мира для генератора и игры
+export function makeLevel(diffId = 'normal') {
+  const d = DIFFICULTIES.find(x => x.id === diffId) || DIFFICULTIES[1];
+  return {
+    id: WORLD_ID, name: 'Остров', seed: WORLD_SEED, diff: d, difficulty: d.level,
+    towns: 15, cabins: 40,
+  };
 }
 
 export const DEFAULT_SETTINGS = {

@@ -1,4 +1,6 @@
-// Синтезированные звуки на WebAudio — никаких файлов, всё генерируется на лету.
+// Звуки на WebAudio: почти всё синтезируется на лету, отдельные выстрелы — записанные сэмплы.
+const SAMPLES = { asval: 'assets/sfx/asval.wav' };
+
 export class Sfx {
   constructor() {
     this.ctx = null;
@@ -21,6 +23,39 @@ export class Sfx {
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.startAmbient();
+    this.loadSamples();
+  }
+
+  loadSamples() {
+    this.samples = {};
+    for (const [k, url] of Object.entries(SAMPLES)) {
+      fetch(url).then(r => r.arrayBuffer()).then(b => this.ctx.decodeAudioData(b))
+        .then(buf => { this.samples[k] = buf; })
+        .catch(e => console.warn('sample', k, e));
+    }
+  }
+
+  // записанный звук с позиционированием; false — сэмпла пока нет
+  sample(k, pos, ref, maxD, vol = 1) {
+    const buf = this.samples && this.samples[k];
+    if (!buf) return false;
+    const o = this.out(pos, ref, maxD);
+    if (!o) return true;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = 0.96 + Math.random() * 0.08;
+    const g = this.ctx.createGain();
+    g.gain.value = vol * o.k;
+    if (pos) {
+      // вдали глушим верха
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 2000 + 16000 * o.k;
+      src.connect(f); f.connect(g);
+    } else src.connect(g);
+    g.connect(o.node);
+    src.start();
+    return true;
   }
 
   setVolume(v) { this.vol = v; if (this.master) this.master.gain.value = v; }
@@ -78,12 +113,13 @@ export class Sfx {
 
   gun(kind, pos) {
     if (!this.ctx) return;
+    if (kind === 'asval' && this.sample('asval', pos, 14, 240, 0.9)) return;
     const o = this.out(pos, 25, 500);
     if (!o) return;
     const v = o.k;
     const P = {
       pistol: [0.22, 3200, 0.9, 140], smg: [0.16, 2800, 0.7, 120], rifle: [0.3, 2600, 1.0, 100],
-      shotgun: [0.45, 1800, 1.2, 70], sniper: [0.6, 2200, 1.3, 60],
+      shotgun: [0.45, 1800, 1.2, 70], sniper: [0.6, 2200, 1.3, 60], asval: [0.12, 1600, 0.35, 90],
     }[kind] || [0.25, 2500, 1, 110];
     this.noiseBurst(o.node, P[0], P[1], 200, 0.7, P[2] * v);
     this.tone(o.node, 'sine', P[3], 40, P[0] * 0.8, 0.9 * v);

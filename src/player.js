@@ -73,9 +73,11 @@ export class Player {
     if (this.landV < -13) this.damage((-this.landV - 13) * 5, 'fall');
 
     // характеристики
-    const desert = g.level.biome === 'desert';
-    this.food = Math.max(0, this.food - 0.04 * (this.sprint ? 1.6 : 1) * dt);
-    this.water = Math.max(0, this.water - 0.062 * (this.sprint ? 1.8 : 1) * (desert ? 1.35 : 1) * dt);
+    const bw = g.world.biomeW(this.pos.x, this.pos.z, this._bw || (this._bw = {}));
+    // в пустыне быстрее хочется пить, в снегах — есть (особенно ночью)
+    const cold = 1 + bw.snow * (g.isNight() ? 0.6 : 0.3);
+    this.food = Math.max(0, this.food - 0.04 * (this.sprint ? 1.6 : 1) * cold * dt);
+    this.water = Math.max(0, this.water - 0.062 * (this.sprint ? 1.8 : 1) * (1 + bw.desert * 0.45) * dt);
     if (this.food <= 0 || this.water <= 0) this.damage(0.55 * dt, 'starve', true);
     else if (this.food > 50 && this.water > 50 && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + 0.12 * dt);
     const maxSt = this.perks.stamina;
@@ -88,7 +90,7 @@ export class Player {
     if (this.grounded && hs > 0.5) {
       this.bobT += dt * hs * 1.6;
       this.stepDist += hs * dt;
-      if (this.stepDist > (this.sprint ? 2.4 : 1.9)) { this.stepDist = 0; if (!this.crouch) g.sfx.step(null, g.level.biome === 'snow'); }
+      if (this.stepDist > (this.sprint ? 2.4 : 1.9)) { this.stepDist = 0; if (!this.crouch) g.sfx.step(null, g.biomeHere() === 'snow'); }
     }
   }
 

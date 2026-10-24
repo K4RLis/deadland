@@ -66,7 +66,7 @@ export class ZombieSim {
   }
 
   spawn(type, x, z, opts = {}) {
-    const T = ZTYPES[type], L = this.g.level.zombie;
+    const T = ZTYPES[type], L = this.g.zParams(x, z);
     const y = this.g.world.height(x, z);
     const zb = {
       id: this.nextId++, type, ti: ZT.indexOf(type),
@@ -78,6 +78,7 @@ export class ZombieSim {
       stuck: false, progT: 1, lastX: x, lastZ: z, wanderT: Math.random() * 4,
       horde: !!opts.horde, blockKey: null, sideT: 0, sideDir: 1, noPath: false, swing: 0,
       boss: !!T.boss, lair: opts.lair || null, specialT: 4 + Math.random() * 3, windT: 0, leapT: 0,
+      mul: { dmg: L.dmg, speed: L.speed },
     };
     this.list.push(zb);
     this.byId.set(zb.id, zb);
@@ -91,7 +92,7 @@ export class ZombieSim {
   }
 
   pickType(p) {
-    const L = this.g.level.zombie;
+    const L = this.g.zParams(p.x, p.z);
     const night = this.g.isNight();
     const mil = this.g.world.military;
     const inMil = mil && Math.hypot(p.x - mil.x, p.z - mil.z) < mil.r + 60;
@@ -122,9 +123,10 @@ export class ZombieSim {
   }
 
   manageSpawns(players) {
-    const g = this.g, L = g.level.zombie;
+    const g = this.g;
     const night = g.isNight();
     for (const p of players) {
+      const L = g.zParams(p.x, p.z);
       let near = 0;
       for (const z of this.list) if ((z.pos.x - p.x) ** 2 + (z.pos.z - p.z) ** 2 < 110 * 110) near++;
       let target = L.count * (night ? 1.6 : 1);
@@ -293,7 +295,7 @@ export class ZombieSim {
         g.bossFx('slam', z.pos.x, z.pos.y, z.pos.z);
         for (const p of g.hostAlivePlayers()) {
           const dd = Math.hypot(p.x - z.pos.x, p.z - z.pos.z);
-          if (dd < 5.5 && Math.abs(p.y - z.pos.y) < 3) g.zombieHitPlayer(p.pid, 34 * (1 - dd / 9) * g.level.zombie.dmg, z);
+          if (dd < 5.5 && Math.abs(p.y - z.pos.y) < 3) g.zombieHitPlayer(p.pid, 34 * (1 - dd / 9) * z.mul.dmg, z);
         }
         const i0 = Math.floor((z.pos.x - 4) / 2), i1 = Math.floor((z.pos.x + 4) / 2), j0 = Math.floor((z.pos.z - 4) / 2), j1 = Math.floor((z.pos.z + 4) / 2);
         for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const b of [...g.blocks.column(i, j)]) g.zombieHitBlock(b, 220);
@@ -329,7 +331,7 @@ export class ZombieSim {
   }
 
   move(z, dt) {
-    const g = this.g, T = ZTYPES[z.type], L = g.level.zombie;
+    const g = this.g, T = ZTYPES[z.type], L = z.mul;
     const night = g.isNight();
     let speed = 0, tx = z.pos.x, tz = z.pos.z;
     z.anim = 0;

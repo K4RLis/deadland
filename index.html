@@ -40,9 +40,21 @@
       </div>
       <div class="menu-main">
         <section id="p-levels" class="mpanel">
-          <h2>Выбери уровень</h2>
-          <div id="m-levels" class="levels"></div>
-          <div id="m-level-detail" class="level-detail hidden">
+          <h2>Остров 3000 × 3000 м</h2>
+          <div class="world-card">
+            <canvas id="m-preview" width="220" height="220"></canvas>
+            <div class="world-info">
+              <div class="biome-row"><i style="background:#e9eff3"></i><b>Север — Снега.</b> Мёртвый город, горы, лютые зомби и лучший лут. Опасность ●●●</div>
+              <div class="biome-row"><i style="background:#6fa54c"></i><b>Центр — Лес.</b> Деревни, озёра, ягоды. Спокойнее всего, хорошо для старта. Опасность ●○○</div>
+              <div class="biome-row"><i style="background:#cfae69"></i><b>Юг — Пустыня.</b> Каньоны, руда, мало воды, много бегунов. Опасность ●●○</div>
+              <div class="hint">Один большой мир, биомы плавно переходят друг в друга. Логова боссов отмечены на карте [M].</div>
+              <div class="field" style="margin-top:10px">Сложность
+                <div id="m-diff" class="diffs"></div>
+              </div>
+              <div id="m-record" class="hint"></div>
+            </div>
+          </div>
+          <div id="m-level-detail" class="level-detail">
             <label class="check"><input type="checkbox" id="m-online" checked> Открыть мир для друзей (онлайн, до 10 игроков)</label>
             <div class="row">
               <button class="btn primary" id="m-new">Новый мир</button>
@@ -122,6 +134,7 @@
   <div id="scope"></div>
   <div id="chat"><div id="chat-log"></div><input id="chat-input" maxlength="120" placeholder="Сообщение… (Enter — отправить, Esc — отмена)"></div>
   <div id="click-to-play" class="hidden">Нажми, чтобы играть</div>
+  <div id="saved"></div>
 </div>
 
 <!-- ======== ИНВЕНТАРЬ ======== -->
@@ -168,7 +181,9 @@
       <button class="btn big primary" id="p-resume">Продолжить</button>
       <button class="btn" id="p-settings-btn">Настройки</button>
       <div id="pause-settings" class="settings hidden"></div>
+      <button class="btn" id="p-save">Сохранить сейчас</button>
       <button class="btn" id="p-quit">Сохранить и выйти в меню</button>
+      <div class="hint">Мир сохраняется автоматически каждые 30 секунд, на рассвете и при выходе.</div>
     </div>
   </div>
 </div>

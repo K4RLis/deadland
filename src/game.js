@@ -14,6 +14,7 @@ import { ZombieSim, ZombieViews, ZTYPES, ZT } from './zombies.js';
 import { ITEMS, makeItem, rollLoot, xpNeed, QUESTS, STATION_NAMES } from './items.js';
 import { makePlayerModel, animate, makeNameTag, itemModel, makeBag } from './models.js';
 import { smooth, clamp, angleLerp } from './rng.js';
+import { MeshBuilder, lin, mat } from './mesh.js';
 
 export const SAVE = 'mkrai:';
 
@@ -101,7 +102,7 @@ export class Game {
     this.camera.add(this.flash);
     this.flash.target.position.set(0.1, -0.3, -6);
     this.camera.add(this.flash.target);
-    const wc = this.level.colors.water;
+    const wc = C.WATER_COLOR;
     this.water = new THREE.Mesh(new THREE.PlaneGeometry(4200, 4200, 1, 1), new THREE.MeshLambertMaterial({ color: wc, transparent: true, opacity: 0.82 }));
     this.water.rotation.x = -Math.PI / 2;
     this.water.position.y = C.SEA;
@@ -117,50 +118,149 @@ export class Game {
     this.stars = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: 1.6, sizeAttenuation: false, fog: false, transparent: true, depthWrite: false }));
     s.add(this.stars);
     // низкополигональные солнце и луна
-    this.sunDisc = new THREE.Mesh(new THREE.CircleGeometry(38, 7), new THREE.MeshBasicMaterial({ color: 0xfff0c0, fog: false }));
-    this.moonDisc = new THREE.Mesh(new THREE.CircleGeometry(24, 6), new THREE.MeshBasicMaterial({ color: 0xdfe6f0, fog: false }));
+    this.sunDisc = new THREE.Mesh(new THREE.CircleGeometry(40, 8), new THREE.MeshBasicMaterial({ color: 0xfff0c0, fog: false }));
+    this.moonDisc = new THREE.Mesh(new THREE.CircleGeometry(26, 7), new THREE.MeshBasicMaterial({ color: 0xdfe6f0, fog: false }));
     s.add(this.sunDisc); s.add(this.moonDisc);
     this.skyCol = new THREE.Color();
     this._c1 = new THREE.Color(); this._c2 = new THREE.Color();
+    // гранёный небесный купол: цвет каждого треугольника считается от высоты и направления на солнце
+    const dg = new THREE.IcosahedronGeometry(1000, 3).toNonIndexed();
+    dg.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(dg.attributes.position.count * 3), 3));
+    this.dome = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+    this.dome.renderOrder = -10;
+    s.add(this.dome);
+    this.domeT = 0;
+    // облака из полигонов: одна плитка 1200×1200 м, 3×3 копии вокруг игрока
+    const cb = new MeshBuilder(0.1);
+    let sd = 991;
+    const rnd = () => { sd = (Math.imul(sd, 1103515245) + 12345) | 0; return ((sd >>> 8) & 0xffff) / 0xffff; };
+    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 1).toNonIndexed());
+    for (let i = 0; i < 16; i++) {
+      const cx = rnd() * 1200 - 600, cz = rnd() * 1200 - 600, cy = 190 + rnd() * 50;
+      const n = 4 + Math.floor(rnd() * 5), size = 18 + rnd() * 22;
+      for (let k = 0; k < n; k++) {
+        const ox = (rnd() - 0.5) * size * 2.2, oz = (rnd() - 0.5) * size * 1.2, r = size * (0.5 + rnd() * 0.6);
+        cb.geo(cloudGeo[k % 3], mat(cx + ox, cy + rnd() * 6, cz + oz, 0, rnd() * 6, 0, r, r * 0.42, r * 0.8), lin(0xffffff));
+      }
+    }
+    const cgeo = cb.build();
+    this.cloudMat = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.92 });
+    this.clouds = [];
+    for (let k = 0; k < 9; k++) {
+      const m = new THREE.Mesh(cgeo, this.cloudMat);
+      m.renderOrder = -5;
+      s.add(m);
+      this.clouds.push(m);
+    }
+    this._sd = new THREE.Vector3(); this._hz = new THREE.Color(); this._zn = new THREE.Color(); this._gl = new THREE.Color(); this._tc = new THREE.Color();
   }
 
-  isNight() { return this.dayTime < 0.22 || this.dayTime > 0.8; }
+  // угол солнца: день (рассвет..закат) — половина круга, ночь — вторая половина
+  sunAngle(t) {
+    const D0 = C.SUNRISE, D1 = C.SUNSET;
+    if (t >= D0 && t <= D1) return (t - D0) / (D1 - D0) * Math.PI;
+    const n = (t - D1 + 1) % 1;
+    return Math.PI + n / (1 - (D1 - D0)) * Math.PI;
+  }
+
+  isNight() { return this.dayTime < C.SUNRISE - 0.015 || this.dayTime > C.SUNSET + 0.015; }
+
+  // смесь параметров биомов в точке × сложность мира
+  zParams(x, z) {
+    const w = this.world.biomeW(x, z, this._zw || (this._zw = {}));
+    const d = this.level.diff.zombie, out = {};
+    for (const k of ['count', 'hp', 'dmg', 'speed', 'runner', 'tank', 'soldier']) {
+      out[k] = C.BIOMES.forest.zombie[k] * w.forest + C.BIOMES.desert.zombie[k] * w.desert + C.BIOMES.snow.zombie[k] * w.snow;
+      if (d[k]) out[k] *= d[k];
+    }
+    return out;
+  }
+
+  lootMul(x, z) {
+    const w = this.world.biomeW(x, z, this._lw || (this._lw = {}));
+    return (C.BIOMES.forest.loot * w.forest + C.BIOMES.desert.loot * w.desert + C.BIOMES.snow.loot * w.snow) * this.level.diff.loot;
+  }
+
+  biomeHere() { return this.world.biomeAt(this.player.pos.x, this.player.pos.z); }
   now() { return this.day + this.dayTime; }
 
   updateSky() {
-    const t = this.dayTime, L = this.level;
-    const ang = (t - 0.25) * Math.PI * 2;
+    const t = this.dayTime;
+    const ang = this.sunAngle(t);
     const sy = Math.sin(ang), sx = Math.cos(ang);
-    const day = smooth(-0.1, 0.18, sy);
-    const dusk = Math.max(0, 1 - Math.abs(sy - 0.02) / 0.22);
-    const c = this.skyCol.setHex(L.sky.night).lerp(this._c1.setHex(L.sky.day), day);
-    c.lerp(this._c2.setHex(L.sky.dusk), dusk * 0.55);
-    if (this.hordeActive) c.lerp(this._c2.setHex(0x5a0a08), 0.55);
-    const underwater = this.camera.position.y < C.SEA - 0.1;
+    const day = smooth(-0.08, 0.2, sy);
+    const dusk = Math.max(0, 1 - Math.abs(sy - 0.03) / 0.25);
+    const cp = this.camera.position;
+    // цвета неба — смесь биомов вокруг игрока
+    const bw = this.world.biomeW(cp.x, cp.z, this._sbw || (this._sbw = {}));
+    const mix = (key, out) => {
+      out.setRGB(0, 0, 0);
+      for (const b of C.BIOME_IDS) { this._tc.setHex(C.BIOMES[b].sky[key]); out.r += this._tc.r * bw[b]; out.g += this._tc.g * bw[b]; out.b += this._tc.b * bw[b]; }
+      return out;
+    };
+    const hz = this._hz, zn = this._zn, gl = this._gl;
+    mix('night', hz);
+    hz.lerp(mix('day', this._c1), day);
+    hz.lerp(mix('dusk', this._c2), dusk * 0.6);
+    zn.copy(mix('night', this._c1)).multiplyScalar(0.6);
+    zn.lerp(mix('zenith', this._c2), day);
+    gl.copy(mix('dusk', this._c1));
+    if (this.hordeActive) { hz.lerp(this._c1.setHex(0x5a0a08), 0.55); zn.lerp(this._c1.setHex(0x2a0404), 0.6); gl.setHex(0xd02010); }
+    const underwater = cp.y < C.SEA - 0.1;
+    const c = this.skyCol.copy(hz);
     if (underwater) c.setHex(0x1a4a6a);
     this.scene.background = c;
     this.scene.fog.color.copy(c);
     const far = this.settings.view * C.CHUNK * 0.98;
-    this.scene.fog.far = underwater ? 30 : far * (0.75 + day * 0.25);
+    this.scene.fog.far = underwater ? 30 : far * (0.72 + day * 0.28);
     this.scene.fog.near = underwater ? 2 : far * 0.3;
+    // купол
+    this.dome.position.copy(cp);
+    this.domeT -= 1;
+    if (this.domeT <= 0) {
+      this.domeT = 6;
+      const sd = this._sd.set(sx, sy, 0.35).normalize();
+      const pos = this.dome.geometry.attributes.position, col = this.dome.geometry.attributes.color;
+      const pa = pos.array, ca = col.array;
+      for (let i = 0; i < pa.length; i += 9) {
+        const x = (pa[i] + pa[i + 3] + pa[i + 6]) / 3000, y = (pa[i + 1] + pa[i + 4] + pa[i + 7]) / 3000, z = (pa[i + 2] + pa[i + 5] + pa[i + 8]) / 3000;
+        const l = Math.hypot(x, y, z) || 1;
+        const h = y / l;
+        const k = smooth(0.0, 0.65, h);
+        let r = hz.r + (zn.r - hz.r) * k, g = hz.g + (zn.g - hz.g) * k, bl = hz.b + (zn.b - hz.b) * k;
+        // свечение у солнца на рассвете и закате
+        const dd = Math.max(0, (x * sd.x + y * sd.y + z * sd.z) / l);
+        const glow = Math.pow(dd, 6) * (0.25 + dusk * 0.9) * (sy > -0.2 ? 1 : 0);
+        r += (gl.r - r) * Math.min(1, glow); g += (gl.g - g) * Math.min(1, glow); bl += (gl.b - bl) * Math.min(1, glow);
+        if (h < 0) { r *= 0.85; g *= 0.85; bl *= 0.85; }
+        for (let v = 0; v < 3; v++) { ca[i + v * 3] = r; ca[i + v * 3 + 1] = g; ca[i + v * 3 + 2] = bl; }
+      }
+      col.needsUpdate = true;
+    }
+    // облака плывут по ветру
+    const T = 1200, drift = this.time * 3.5;
+    const ox = Math.floor((cp.x - drift) / T) * T + drift, oz = Math.floor(cp.z / T) * T;
+    let k = 0;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) this.clouds[k++].position.set(ox + i * T + T / 2, 0, oz + j * T + T / 2);
+    this.cloudMat.opacity = 0.55 + 0.37 * day;
     const p = this.player.pos;
-    const dir = new THREE.Vector3(sx, Math.max(0.08, sy), 0.35).normalize();
+    const dir = this._sd.set(sx, Math.max(0.08, sy), 0.35).normalize();
     this.sun.position.set(p.x + dir.x * 160, p.y + dir.y * 160, p.z + dir.z * 160);
     this.sun.target.position.set(p.x, p.y, p.z);
     this.sun.intensity = 2.7 * day;
-    this.sun.color.setHex(dusk > 0.5 ? 0xffc890 : 0xfff2dd);
+    this.sun.color.setHex(dusk > 0.45 ? 0xffb878 : 0xfff2dd);
     this.sun.castShadow = this.settings.shadows && day > 0.05;
     this.moon.position.set(p.x - dir.x * 160, p.y + Math.max(0.3, -sy) * 160, p.z - dir.z * 160);
     this.moon.target.position.set(p.x, p.y, p.z);
-    this.moon.intensity = 0.55 * (1 - day);
-    this.hemi.intensity = 0.32 + 1.15 * day;
-    this.hemi.color.setHex(this.hordeActive ? 0xff9a90 : 0xcfe6ff);
-    this.stars.position.copy(this.camera.position);
+    this.moon.intensity = 0.5 * (1 - day);
+    this.hemi.intensity = 0.28 + 1.2 * day;
+    this.hemi.color.setHex(this.hordeActive ? 0xff9a90 : dusk > 0.5 ? 0xffd8b8 : 0xcfe6ff);
+    this.stars.position.copy(cp);
     this.stars.material.opacity = Math.max(0, 1 - day * 1.6) * (this.hordeActive ? 0.4 : 1);
-    const cp = this.camera.position;
     this.sunDisc.position.set(cp.x + sx * 900, cp.y + sy * 900, cp.z + 0.35 * 900);
     this.sunDisc.lookAt(cp);
     this.sunDisc.visible = sy > -0.1;
+    this.sunDisc.material.color.setHex(dusk > 0.5 ? 0xffc080 : 0xfff2c8);
     this.moonDisc.position.set(cp.x - sx * 900, cp.y - sy * 900, cp.z - 0.35 * 900);
     this.moonDisc.lookAt(cp);
     this.moonDisc.visible = sy < 0.1;
@@ -168,10 +268,11 @@ export class Game {
     this.water.position.x = Math.round(cp.x / 40) * 40;
     this.water.position.z = Math.round(cp.z / 40) * 40;
     this.flash.intensity = this.flashOn && this.player.alive ? 70 : 0;
-    this.weapons.hemi.intensity = 0.35 + 1.25 * day + (this.flashOn ? 0.5 : 0);
-    this.weapons.sun.intensity = 0.25 + 1.8 * day;
-    this.sfx.setWind(0.02 + (1 - day) * 0.02 + (L.biome === 'snow' ? 0.03 : 0));
+    this.weapons.hemi.intensity = 0.3 + 1.3 * day + (this.flashOn ? 0.5 : 0);
+    this.weapons.sun.intensity = 0.2 + 1.85 * day;
+    this.sfx.setWind(0.02 + (1 - day) * 0.02 + bw.snow * 0.035);
   }
+
 
   // ---------- запуск ----------
   async init(progress) {
@@ -326,6 +427,16 @@ export class Game {
       if (this.day > rec) { try { localStorage.setItem(key, String(this.day)); } catch (_) { /* ignore */ } }
     }
     this.ui.toast('Наступил день ' + this.day);
+    this.saveAll(false);
+  }
+
+  // автосохранение каждые 30 с, на рассвете, при сворачивании вкладки и выходе
+  saveAll(manual) {
+    this.saveT = 30;
+    const ok = this.savePlayer() && (!this.isHost || this.saveWorld());
+    if (!ok) this.ui.toast('Не удалось сохранить: в браузере закончилось место');
+    else this.ui.savedNote(this.isHost ? (manual ? 'Мир сохранён' : 'Автосохранение мира') : 'Персонаж сохранён');
+    return ok;
   }
 
   // ---------- задания и статистика ----------
@@ -380,7 +491,7 @@ export class Game {
     const drops = [];
     for (const d of this.drops.values()) drops.push([d.id, d.x, d.y, d.z]);
     this.net.send(pid, {
-      t: 'welcome', id: pid, level: this.level.id, seed: this.seed, code: this.code,
+      t: 'welcome', id: pid, level: this.level.id, diff: this.level.diff.id, seed: this.seed, code: this.code,
       tm: this.dayTime, d: this.day, h: this.hordeActive ? 1 : 0,
       roster: [...this.roster].map(([p, r]) => [p, r.name, r.color]), drops, ver: C.VERSION,
     });
@@ -447,12 +558,12 @@ export class Game {
       for (const [cid, c] of this.store) if (c.zombie && this.time - c.t > 420) { this.store.delete(cid); this.broadcastAll({ t: 'dDel', id: +cid.slice(1) }); }
     }
     this.saveT -= dt;
-    if (this.saveT <= 0) { this.saveT = 45; this.saveWorld(); this.savePlayer(); }
+    if (this.saveT <= 0) this.saveAll(false);
   }
 
   myFlags() {
     const P = this.player;
-    return (P.crouch ? 1 : 0) | (P.alive ? 0 : 2) | (P.sprint ? 4 : 0) | (this.flashOn ? 8 : 0);
+    return (P.crouch ? 1 : 0) | (P.alive ? 0 : 2) | (P.sprint ? 4 : 0) | (this.flashOn ? 8 : 0) | (this.weapons.swingT > 0.35 ? 16 : 0);
   }
 
   hostHandle(pid, m) {
@@ -475,7 +586,7 @@ export class Game {
       case 'shot': {
         const o = m.o;
         if (!Array.isArray(o)) return;
-        const r = m.w === 'sniper' ? 130 : m.w === 'pistol' ? 70 : m.w === 'shotgun' ? 90 : 100;
+        const r = m.w === 'asval' ? 22 : m.w === 'sniper' ? 130 : m.w === 'pistol' ? 70 : m.w === 'shotgun' ? 90 : 100;
         this.zsim.noise(o[0], o[1], o[2], r, pid);
         this.broadcastAll({ t: 'shot', pid, o: m.o, e: m.e, w: m.w }, pid);
         break;
@@ -590,7 +701,7 @@ export class Game {
       const who = by ? (this.roster.get(by) || {}).name : '';
       this.broadcastAll({ t: 'note', text: `Босс «${T.name}» повержен${who ? ' — ' + who : ''}! Трофеи на месте гибели.`, big: 1 });
     } else if (Math.random() < 0.16) {
-      const items = rollLoot('zombie', Math.random, this.level.loot);
+      const items = rollLoot('zombie', Math.random, this.lootMul(z.pos.x, z.pos.z));
       if (items.length) this.hostDrop(z.pos.x, z.pos.y, z.pos.z, items, 'Останки зомби', true);
     }
   }
@@ -602,7 +713,7 @@ export class Game {
       const info = this.world.containerInfo(cid);
       if (!info) return null;
       if (!c || (c.items.length === 0 && this.time - c.t > 1500)) {
-        const items = rollLoot(info.tier, Math.random, this.level.loot);
+        const items = rollLoot(info.tier, Math.random, this.lootMul((info.bb[0] + info.bb[3]) / 2, (info.bb[2] + info.bb[5]) / 2));
         c = { items, t: this.time, viewers: c ? c.viewers : new Set(), name: info.name, cap: 12 };
         this.store.set(cid, c);
       }
@@ -613,7 +724,7 @@ export class Game {
       if (!c) { c = { items: [], t: this.time, viewers: new Set(), name: coll ? 'Сборщик воды' : 'Ящик для хранения', cap: coll ? 6 : 24, fill: this.time }; this.store.set(cid, c); }
       if (coll) {
         // сборщик понемногу наполняет бутылки (быстрее в дождливой зиме, медленнее в пустыне)
-        const per = this.level.biome === 'desert' ? 360 : 200;
+        const per = this.world.biomeAt(b.i * 2, b.j * 2) === 'desert' ? 360 : 200;
         c.fill = c.fill ?? this.time;
         while (this.time - c.fill > per) {
           c.fill += per;
@@ -701,7 +812,7 @@ export class Game {
       this.net.toHost({ t: 'st', p: [+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2)], w: this.weapons.curId || '', f: this.myFlags(), hp: Math.round(P.hp) });
     }
     this.saveT -= dt;
-    if (this.saveT <= 0) { this.saveT = 30; this.savePlayer(); }
+    if (this.saveT <= 0) this.saveAll(false);
   }
 
   clientHandle(m) {
@@ -818,10 +929,8 @@ export class Game {
     if (!done.includes(this.level.id)) {
       done.push(this.level.id);
       try { localStorage.setItem(SAVE + 'completed', JSON.stringify(done)); } catch (_) { /* ignore */ }
-      const idx = C.LEVELS.findIndex(l => l.id === this.level.id);
-      const next = C.LEVELS[idx + 1];
-      this.ui.showVictory(`Вы пережили первую кровавую луну на карте «${escapeHtml(this.level.name)}» — уровень пройден!<br>Убито зомби: <b>${this.player.kills}</b> · уровень персонажа: <b>${this.player.level}</b>` +
-        (next ? `<br><br>Открыт следующий вызов: <b>${escapeHtml(next.name)}</b>. А здесь можно продолжать выживать — орды будут каждые 7 дней.` : '<br><br>Вы прошли все уровни. Сможете прожить 28 дней?'));
+      this.ui.showVictory(`Вы пережили первую кровавую луну (сложность: ${escapeHtml(this.level.diff.name.toLowerCase())})!<br>Убито зомби: <b>${this.player.kills}</b> · уровень персонажа: <b>${this.player.level}</b>` +
+        `<br><br>Дальше опаснее: орды приходят каждые 7 дней и растут. Пустыня и снега — зоны посложнее, но с лучшим лутом. Сможете прожить 28 дней?`);
     } else this.ui.toast('Вы пережили кровавую луну!', true);
   }
 
@@ -883,7 +992,8 @@ export class Game {
       o.mesh.rotation.x = dead ? -Math.PI / 2 : 0;
       o.tag.visible = !dead;
       const aim = o.w && ITEMS[o.w] && ITEMS[o.w].cat === 'gun';
-      animate(o.mesh, dt, dead ? 0 : sp, { aim, pitch: o.pitch, crouch: !!(o.f & 1) });
+      o.sw = (o.sw || 0) + (((o.f & 16) ? 1 : 0) - (o.sw || 0)) * Math.min(1, dt * 14);
+      animate(o.mesh, dt, dead ? 0 : sp, { aim, pitch: o.pitch, crouch: !!(o.f & 1), swing: o.sw * 0.9 });
     }
   }
 
@@ -1224,6 +1334,7 @@ export class Game {
     this.mapImage.width = N; this.mapImage.height = N;
     this.mapN = N; this.mapRow = 0;
     this.mapH = new Float32Array(N * N);
+    this.mapB = new Uint8Array(N * N);
     this.mapDone = false;
   }
 
@@ -1236,32 +1347,35 @@ export class Game {
       for (let i = 0; i < N; i++) {
         const x = -C.HALF + (i + 0.5) * C.WORLD_SIZE / N;
         this.mapH[j * N + i] = w.applyFlats(x, z, w.rawHeight(x, z), null);
+        this.mapB[j * N + i] = C.BIOME_IDS.indexOf(w.biomePick(x, z, ((i * 7 + j * 13) % 10) / 10));
       }
     }
     if (this.mapRow < N) return;
     this.mapDone = true;
     const ctx = this.mapImage.getContext('2d');
     const img = ctx.createImageData(N, N);
-    const L = this.level.colors, H = this.mapH;
+    const H = this.mapH;
     const rgb = h => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
-    const cs = { grass: rgb(L.grass), sand: rgb(L.sand), rock: rgb(L.rock), snow: rgb(L.snow), water: rgb(L.water), deep: rgb(0x1d4a6e) };
+    const pals = C.BIOME_IDS.map(b => { const L = C.BIOMES[b].colors; return { grass: rgb(L.grass), sand: rgb(L.sand), rock: rgb(L.rock), snow: rgb(L.snow), snowLine: C.BIOMES[b].snowLine }; });
+    const water = rgb(C.WATER_COLOR), deep = rgb(0x1d4a6e);
     const cell = C.WORLD_SIZE / N;
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       const h = H[j * N + i];
       const hl = H[j * N + Math.max(0, i - 1)], hu = H[Math.max(0, j - 1) * N + i];
       const slope = Math.hypot(h - hl, h - hu) / cell;
+      const cs = pals[this.mapB[j * N + i]];
       let c;
-      if (h < -6) c = cs.deep; else if (h < 0) c = cs.water;
+      if (h < -6) c = deep; else if (h < 0) c = water;
       else if (h < 1.4) c = cs.sand;
       else if (slope > 0.6) c = cs.rock;
-      else if (h > this.level.snowLine) c = cs.snow;
+      else if (h > cs.snowLine) c = cs.snow;
       else c = cs.grass;
       const shadeK = h < 0 ? 1 : clamp(1 + ((h - hl) + (h - hu)) * 0.06, 0.7, 1.25);
       const k = (j * N + i) * 4;
       img.data[k] = clamp(c[0] * shadeK, 0, 255); img.data[k + 1] = clamp(c[1] * shadeK, 0, 255); img.data[k + 2] = clamp(c[2] * shadeK, 0, 255); img.data[k + 3] = 255;
     }
     ctx.putImageData(img, 0, 0);
-    this.mapH = null;
+    this.mapH = null; this.mapB = null;
     if (this.ui.panel === 'map') this.ui.drawMap();
   }
 
@@ -1270,7 +1384,7 @@ export class Game {
   playerKey() { return SAVE + 'player:' + this.level.id + ':' + (this.isHost ? 'host' : this.code); }
 
   saveWorld() {
-    if (!this.isHost) return;
+    if (!this.isHost) return true;
     const storage = {};
     for (const [cid, c] of this.store) if (cid.startsWith('b:') && c.items.length) storage[cid] = c.items;
     const drops = [];
@@ -1279,8 +1393,9 @@ export class Game {
       if (c && c.items.length && !c.zombie) drops.push([d.x, d.y, d.z, c.items, c.name]);
     }
     const lairs = this.zsim && this.zsim.lairState ? this.zsim.lairState.map(s => Math.max(0, s.respawn - this.time)) : [];
-    const data = { v: 2, seed: this.seed, code: this.code, tm: this.dayTime, d: this.day, blocks: this.blocks.serialize(), depleted: [...this.world.depleted], storage, drops, lairs };
-    try { localStorage.setItem(this.worldKey(), JSON.stringify(data)); } catch (e) { console.warn('save failed', e); }
+    const data = { v: 3, diff: this.level.diff.id, seed: this.seed, code: this.code, tm: this.dayTime, d: this.day, blocks: this.blocks.serialize(), depleted: [...this.world.depleted], storage, drops, lairs };
+    try { localStorage.setItem(this.worldKey(), JSON.stringify(data)); } catch (e) { console.warn('save failed', e); return false; }
+    return true;
   }
 
   loadWorld() {
@@ -1302,9 +1417,10 @@ export class Game {
   savePlayer() {
     const P = this.player;
     const data = { pos: [P.pos.x, P.pos.y, P.pos.z], yaw: P.yaw, hp: P.hp, food: P.food, water: P.water, xp: P.xp, level: P.level, kills: P.kills, inv: this.inv.serialize(), bed: P.bed, alive: P.alive, sel: P.sel, stats: P.stats, quest: P.quest };
-    try { localStorage.setItem(this.playerKey(), JSON.stringify(data)); } catch (e) { console.warn('save failed', e); }
+    try { localStorage.setItem(this.playerKey(), JSON.stringify(data)); } catch (e) { console.warn('save failed', e); return false; }
     // уровень персонажа общий для всех миров
     try { localStorage.setItem(SAVE + 'char', JSON.stringify({ xp: P.xp, level: P.level })); } catch (_) { /* ignore */ }
+    return true;
   }
 
   loadPlayer() {

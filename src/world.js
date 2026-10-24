@@ -37,9 +37,31 @@ export class World {
 
   ckey(cx, cz) { return (cx + 64) * 128 + (cz + 64); }
 
+  // ---------- биомы ----------
+  // «температура»: север (−z) холодный, юг (+z) жаркий, с извилистыми границами
+  biomeW(x, z, out) {
+    const t = z / C.HALF * 0.85 + this.nB.noise(x / 1500 + 21.3, z / 1500 - 4.7) * 0.38 + this.nA.noise(x / 380 + 9.1, z / 380 + 2.2) * 0.05;
+    const snow = smooth(-0.2, -0.4, t), desert = smooth(0.24, 0.44, t);
+    out = out || {};
+    out.snow = snow; out.desert = desert; out.forest = Math.max(0, 1 - snow - desert);
+    return out;
+  }
+
+  biomeAt(x, z) {
+    const w = this.biomeW(x, z, this._bw || (this._bw = {}));
+    return w.snow > 0.5 ? 'snow' : w.desert > 0.5 ? 'desert' : 'forest';
+  }
+
+  // выбор биома с «дизерингом» в переходной зоне (r — случайное 0..1)
+  biomePick(x, z, r) {
+    const w = this.biomeW(x, z, this._bw2 || (this._bw2 = {}));
+    return r < w.snow ? 'snow' : r < w.snow + w.desert ? 'desert' : 'forest';
+  }
+
   // ---------- рельеф ----------
   rawHeight(x, z) {
-    const L = this.level;
+    const bw = this.biomeW(x, z, this._bh || (this._bh = {}));
+    const mount = bw.forest * C.BIOMES.forest.mountains + bw.desert * C.BIOMES.desert.mountains + bw.snow * C.BIOMES.snow.mountains;
     const ax = Math.abs(x) / C.HALF, az = Math.abs(z) / C.HALF;
     let e = Math.max(ax, az) * 0.6 + Math.hypot(ax, az) * 0.4 * 0.78;
     e += this.nB.noise(x / 420 + 5.1, z / 420 - 3.3) * 0.05;
@@ -48,13 +70,14 @@ export class World {
     let h = n.fbm(x / 900, z / 900, 4) * 24 + 13;
     const mMask = smooth(0.12, 0.55, this.nB.noise(x / 1400 + 7.3, z / 1400 - 2.1));
     const rr = 1 - Math.abs(n.fbm(x / 430 + 3.1, z / 430 + 1.7, 4));
-    h += rr * rr * 72 * mMask * L.mountains;
+    h += rr * rr * 72 * mMask * mount;
     h += n.noise(x / 55, z / 55) * 1.3;
     const lake = this.nC.noise(x / 470 + 1.9, z / 470 + 8.2);
     if (lake > 0.5) h -= (lake - 0.5) * 95;
-    if (L.biome === 'desert' && h > 6) {
+    if (bw.desert > 0 && h > 6) {
+      // столовые горы пустыни
       const t = (h - 6) / 9, f = t - Math.floor(t);
-      h = 6 + (Math.floor(t) + smooth(0.3, 0.7, f)) * 9;
+      h = lerp(h, 6 + (Math.floor(t) + smooth(0.3, 0.7, f)) * 9, bw.desert);
     }
     return h * mask + (mask - 1) * 32;
   }
@@ -169,16 +192,19 @@ export class World {
     const names = shuffle(TOWN_NAMES.slice(), rng);
 
     // города
+    const CITIES = [['forest', 'Новоград', 150], ['desert', 'Песчаногорск', 140], ['snow', 'Мёртвый город', 210]];
     let tries = 0;
-    while (this.towns.length < L.towns && tries++ < 5000) {
-      const city = this.towns.length === 0;
-      const r = city ? L.cityR : 55 + rng() * 45;
+    while (this.towns.length < L.towns && tries++ < 8000) {
+      const city = this.towns.length < CITIES.length;
+      const cityDef = city ? CITIES[this.towns.length] : null;
+      const r = city ? cityDef[2] : 55 + rng() * 45;
       const lim = C.HALF * 0.74 - r;
       const x = (rng() * 2 - 1) * lim, z = (rng() * 2 - 1) * lim;
       const h = this.rawHeight(x, z);
       if (h < 4 || h > 48) continue;
+      if (city && this.biomeAt(x, z) !== cityDef[0]) continue;
       let ok = true;
-      for (const t of this.towns) if (Math.hypot(t.x - x, t.z - z) < t.r + r + 230) { ok = false; break; }
+      for (const t of this.towns) if (Math.hypot(t.x - x, t.z - z) < t.r + r + 200) { ok = false; break; }
       if (!ok) continue;
       let mn = h, mx = h, sum = h;
       for (let i = 0; i < 8; i++) {
@@ -188,8 +214,8 @@ export class World {
         if (hh < 0.5) ok = false;
       }
       if (!ok || mx - mn > (city ? 45 : 20) + tries * 0.006) continue;
-      const town = { id: this.towns.length, name: names[this.towns.length % names.length], x, z, r, h: Math.max(4, sum / 9), city, kind: 'town' };
-      if (city) town.name = L.biome === 'snow' ? 'Мёртвый город' : (L.biome === 'desert' ? 'Песчаногорск' : 'Новоград');
+      const town = { id: this.towns.length, name: names[this.towns.length % names.length], x, z, r, h: Math.max(4, sum / 9), city, kind: 'town', biome: this.biomeAt(x, z) };
+      if (city) town.name = cityDef[1];
       this.towns.push(town);
       this.addFlat(x, z, r, town.h, 'town');
     }
@@ -212,9 +238,11 @@ export class World {
 
     // логова боссов: центр большого города, военная база и случайный городок
     this.lairs = [];
-    if (this.towns[0]) this.lairs.push({ type: 'butcher', x: this.towns[0].x + 12, z: this.towns[0].z + 12 });
+    const byName = n => this.towns.find(t => t.name === n);
+    const dead = byName('Мёртвый город') || this.towns[0], sand = byName('Песчаногорск') || this.towns[1];
+    if (dead) this.lairs.push({ type: 'butcher', x: dead.x + 12, z: dead.z + 12 });
     if (this.military) this.lairs.push({ type: 'leaper', x: this.military.x - 10, z: this.military.z + 20 });
-    if (this.towns.length > 3) { const t = this.towns[1 + Math.floor(rng() * (this.towns.length - 1))]; this.lairs.push({ type: 'screamer', x: t.x + 8, z: t.z - 8 }); }
+    if (sand) this.lairs.push({ type: 'screamer', x: sand.x + 8, z: sand.z - 8 });
 
     // дороги между городами (минимальное остовное дерево + несколько петель)
     const nodes = this.towns.slice();
@@ -466,7 +494,7 @@ export class World {
   // ---------- экземпляры построек ----------
   instStruct(s) {
     if (s._inst) return s._inst;
-    const def = buildPrefab(s.name, mulberry32(s.seed), this.level);
+    const def = buildPrefab(s.name, mulberry32(s.seed), this.biomeAt(s.x, s.z));
     const boxes = [], prisms = [], tris = [], colliders = [], conts = [];
     const r = s.rot;
     const col = c => (typeof c === 'number' ? c : (def.pal[c] ?? 0xff00ff));
@@ -515,63 +543,64 @@ export class World {
     const key = this.ckey(cx, cz);
     let d = this.chunks.get(key);
     if (d) return d;
-    const L = this.level;
     d = { cx, cz, key, trees: [], rocks: [], bushes: [], structs: this.structGrid.get(key) || [], colliders: [], conts: [] };
     this.chunks.set(key, d);
     const rng = mulberry32(hash2(this.seed, cx, cz));
     const x0 = cx * C.CHUNK, z0 = cz * C.CHUNK;
-    const desert = L.biome === 'desert';
-    const tries = Math.round(75 * L.trees.density);
-    for (let i = 0; i < tries; i++) {
+    for (let i = 0; i < 75; i++) {
       const x = x0 + rng() * C.CHUNK, z = z0 + rng() * C.CHUNK;
-      const r1 = rng(), r2 = rng(), r3 = rng();
+      const r1 = rng(), r2 = rng(), r3 = rng(), r4 = rng();
       if (Math.abs(x) > C.HALF - 2 || Math.abs(z) > C.HALF - 2) continue;
+      const bio = this.biomePick(x, z, r4);
+      const B = C.BIOMES[bio];
+      if (r1 > B.trees.density * 1.05) continue;
       const fn = this.nC.noise(x / 260 + 11, z / 260 - 7);
-      const p = desert ? 0.5 : smooth(-0.4, 0.3, fn);
-      if (r1 > p) continue;
+      const p = bio === 'desert' ? 0.5 : smooth(-0.4, 0.3, fn);
+      if (r1 > p * B.trees.density) continue;
       const h = this.height(x, z);
       if (h < 1.6) continue;
       if (this.flatWeight(x, z, 10) > 0 || this.roadWeight(x, z) > 0) continue;
       const id = `t${cx}_${cz}_${i}`;
       if (this.depleted.has(id)) continue;
-      let type = L.trees.types[Math.floor(r2 * L.trees.types.length)];
-      if (h > L.snowLine + 8 && type !== 'dead' && !desert) type = 'snowpine';
+      let type = B.trees.types[Math.floor(r2 * B.trees.types.length)];
+      if (bio === 'forest' && h > B.snowLine + 8 && type !== 'dead') type = 'snowpine';
       if (h > 95 && r2 < 0.6) continue;
       const s = 0.8 + r3 * 0.6;
       d.trees.push({ id, x, y: h, z, type, s, rot: r2 * 6.283 });
       const tw = type === 'cactus' ? 0.4 : 0.32;
       d.colliders.push({ x0: x - tw * s, y0: h - 1, z0: z - tw * s, x1: x + tw * s, y1: h + 7 * s, z1: z + tw * s, kind: 'tree', ref: id, ramp: -1 });
     }
-    const rockTries = desert ? 10 : 7;
-    for (let i = 0; i < rockTries; i++) {
+    for (let i = 0; i < 9; i++) {
       const x = x0 + rng() * C.CHUNK, z = z0 + rng() * C.CHUNK;
       const r1 = rng(), r2 = rng(), r3 = rng();
-      if (r1 > 0.6) continue;
+      if (r1 > 0.55) continue;
       if (Math.abs(x) > C.HALF - 2 || Math.abs(z) > C.HALF - 2) continue;
       const h = this.height(x, z);
       if (h < 0.5) continue;
       if (this.flatWeight(x, z, 6) > 0 || this.roadWeight(x, z) > 0) continue;
-      // железная руда чаще в горах
-      const ore = r3 < (h > 32 ? 0.45 : 0.16) * (desert ? 1.4 : 1);
+      const bio = this.biomeAt(x, z);
+      // железная руда чаще в горах и в пустыне
+      const ore = r3 < (h > 32 ? 0.45 : 0.16) * (bio === 'desert' ? 1.4 : 1);
       const id = `${ore ? 'o' : 'r'}${cx}_${cz}_${i}`;
       if (this.depleted.has(id)) continue;
       const s = 0.9 + r2 * 1.4;
-      d.rocks.push({ id, x, y: h, z, s, rot: r3 * 6.283, ore });
+      d.rocks.push({ id, x, y: h, z, s, rot: r3 * 6.283, ore, bio });
       d.colliders.push({ x0: x - 0.9 * s, y0: h - 1, z0: z - 0.8 * s, x1: x + 0.9 * s, y1: h + 0.75 * s, z1: z + 0.8 * s, kind: ore ? 'ore' : 'rock', ref: id, ramp: -1 });
     }
     for (let i = 0; i < 26; i++) {
       const x = x0 + rng() * C.CHUNK, z = z0 + rng() * C.CHUNK;
-      const r1 = rng(), r2 = rng();
-      if (r1 > (desert ? 0.18 : 0.5)) continue;
+      const r1 = rng(), r2 = rng(), r3 = rng();
+      const bio = this.biomePick(x, z, r3);
+      if (r1 > (bio === 'desert' ? 0.18 : 0.5)) continue;
       const h = this.height(x, z);
-      if (h < 1.5 || h > L.snowLine + 20) continue;
+      if (h < 1.5 || (bio === 'forest' && h > C.BIOMES.forest.snowLine + 20)) continue;
       if (this.flatWeight(x, z, 4) > 0 || this.roadWeight(x, z) > 0) continue;
       const id = `u${cx}_${cz}_${i}`;
       if (this.depleted.has(id)) continue;
       const s = 0.6 + r2 * 0.7;
-      // каждый третий куст — ягодный; любой куст даёт волокно
-      const berry = !desert && (i % 3 === 0);
-      d.bushes.push({ id, x, y: h, z, s, berry });
+      // ягодные кусты только в лесу; любой куст даёт волокно
+      const berry = bio === 'forest' && (i % 3 === 0);
+      d.bushes.push({ id, x, y: h, z, s, berry, bio });
       d.colliders.push({ x0: x - 0.7 * s, y0: h, z0: z - 0.7 * s, x1: x + 0.7 * s, y1: h + 0.9 * s, z1: z + 0.7 * s, kind: 'bush', ref: id, ramp: -1, ghost: true });
     }
     for (const s of d.structs) {

@@ -4,7 +4,9 @@ import { ITEMS, FISTS } from './items.js';
 import { itemModel, part } from './models.js';
 import { BLOCK_TYPES } from './blocks.js';
 
-const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.69, sniper: -0.74 };
+const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.69, asval: -0.57, sniper: -0.74 };
+const easeOut = t => 1 - (1 - t) * (1 - t);
+const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3(), _o = new THREE.Vector3(), _e = new THREE.Vector3();
 
 export class Weapons {
@@ -35,6 +37,8 @@ export class Weapons {
     this.flash.visible = false;
     this.flashT = 0;
     this.lastAmmoUi = -1;
+    this.fists = null;
+    this.punchSide = 1;
   }
 
   equip(id) {
@@ -48,19 +52,29 @@ export class Weapons {
       else if (def.cat !== 'gun' && def.cat !== 'melee') { m.scale.setScalar(0.55); m.rotation.set(0.3, 0.6, 0); }
       this.model.add(m);
     }
-    // рука
-    const skin = 0xe0ac80;
-    if (!def || def.cat === 'melee' || def.cat === 'gun') {
-      part(this.model, 0.085, 0.085, 0.42, this.g.myColor || 0x3b6fb6, 0.0, -0.08, 0.26, 0.15);
+    // руки
+    const skin = 0xe0ac80, sleeve = this.g.myColor || 0x3b6fb6;
+    this.fists = null;
+    if (!def) {
+      // два кулака в стойке: кисть, костяшки, большой палец, рукав с манжетой
+      this.fists = [];
+      for (const side of [1, -1]) {
+        const h = new THREE.Group();
+        part(h, 0.1, 0.095, 0.12, skin, 0, 0, 0);
+        part(h, 0.102, 0.035, 0.05, 0xc8946a, 0, 0.034, -0.045);
+        part(h, 0.03, 0.04, 0.065, skin, -side * 0.058, -0.012, -0.015);
+        part(h, 0.085, 0.085, 0.34, sleeve, 0, -0.1, 0.19, 0.62);
+        part(h, 0.092, 0.092, 0.05, 0x2a2a2a, 0, -0.03, 0.065, 0.62);
+        h.scale.setScalar(0.85);
+        this.model.add(h);
+        this.fists.push({ g: h, side });
+      }
+    } else if (def.cat === 'melee' || def.cat === 'gun') {
+      part(this.model, 0.085, 0.085, 0.42, sleeve, 0.0, -0.08, 0.26, 0.15);
       part(this.model, 0.08, 0.08, 0.09, skin, 0.0, -0.05, 0.03);
     } else {
-      part(this.model, 0.085, 0.085, 0.42, this.g.myColor || 0x3b6fb6, 0.04, -0.12, 0.25, 0.2);
+      part(this.model, 0.085, 0.085, 0.42, sleeve, 0.04, -0.12, 0.25, 0.2);
       part(this.model, 0.08, 0.08, 0.09, skin, 0.02, -0.08, 0.04);
-    }
-    if (!def) {
-      part(this.model, 0.09, 0.09, 0.1, skin, 0, -0.02, -0.05);
-      part(this.model, 0.09, 0.09, 0.1, skin, -0.32, -0.02, -0.05);
-      part(this.model, 0.085, 0.085, 0.42, this.g.myColor || 0x3b6fb6, -0.32, -0.08, 0.2, 0.15);
     }
     if (def && def.cat === 'gun') { this.flash.position.set(0, 0.03, MUZZLE[id] ?? -0.4); this.model.add(this.flash); }
     this.model.traverse(o => { o.castShadow = false; });
@@ -220,8 +234,10 @@ export class Weapons {
   melee(def) {
     this.cool = def.rate;
     this.swingT = 1;
+    if (def === FISTS) this.punchSide = -this.punchSide;
     this.g.sfx.swing(null);
-    this.meleePending = { t: 0.14, def };
+    // удар засчитывается в момент, когда кулак/лезвие на пике движения
+    this.meleePending = { t: def.rate * 0.27, def };
   }
 
   doMelee(def) {
@@ -348,6 +364,32 @@ export class Weapons {
     g.dismantleBlock(hit.c.ref);
   }
 
+  // кулаки: стойка, поочерёдные прямые удары, покачивание при ходьбе и беге
+  animateFists(dt, P, moving) {
+    const p = this.swingT > 0 ? 1 - this.swingT : 1;
+    let ext = 0;
+    if (this.swingT > 0) ext = p < 0.22 ? easeOut(p / 0.22) : 1 - easeInOut((p - 0.22) / 0.78);
+    const run = P.sprint ? 1 : 0;
+    for (const f of this.fists) {
+      const s = f.side;
+      const active = s === this.punchSide;
+      const e = active ? ext : 0;
+      const back = active ? 0 : ext * 0.5;
+      const bob = moving ? Math.sin(this.bobT + (s > 0 ? 0 : Math.PI)) : 0;
+      let x = 0.2 * s, y = -0.215 + (s < 0 ? -0.012 : 0), z = -0.47;
+      x += bob * 0.012 * (1 + run);
+      y += Math.abs(bob) * 0.012 * (1 + run * 2) - run * 0.05;
+      z += bob * 0.04 * run;
+      // прямой удар: кулак уходит вперёд к центру экрана
+      x -= s * 0.16 * e;
+      y += 0.075 * e;
+      z -= 0.3 * e;
+      z += back * 0.06; y -= back * 0.02;
+      f.g.position.set(x, y, z);
+      f.g.rotation.set(0.12 + 0.2 * e - run * 0.2, s * (0.22 - 0.32 * e), s * (-0.12 + 0.25 * e));
+    }
+  }
+
   animate(dt, def, slot) {
     const g = this.g, P = g.player;
     const hs = Math.hypot(P.vel.x, P.vel.z);
@@ -377,12 +419,21 @@ export class Weapons {
       const k = Math.sin(p * Math.PI);
       py -= k * 0.16; rx -= k * 0.6; rz += k * 0.3;
     }
-    // взмах
-    if (this.swingT > 0 && (cat === 'melee' || cat === 'fist' || cat === 'block')) {
+    // взмах оружием: замах вверх-вправо, удар по диагонали вниз-влево, возврат
+    if (this.swingT > 0 && cat === 'melee') {
       const p = 1 - this.swingT;
-      const k = p < 0.25 ? p / 0.25 : 1 - (p - 0.25) / 0.75;
-      rx -= (p < 0.25 ? -0.6 * k : 1.3 * k);
-      pz -= k * 0.15; px -= k * 0.08;
+      let a, b, c;
+      if (p < 0.2) { a = easeOut(p / 0.2); b = 0; c = 0; }
+      else if (p < 0.42) { a = 1; b = easeInOut((p - 0.2) / 0.22); c = 0; }
+      else { a = 1; b = 1; c = easeInOut((p - 0.42) / 0.58); }
+      const wx = 0.06 * a - 0.3 * b, wy = 0.1 * a - 0.22 * b, wz = 0.06 * a - 0.2 * b;
+      const wrx = 0.6 * a - 1.85 * b, wry = 0.25 * b, wrz = -0.35 * a + 0.95 * b;
+      const k = 1 - c;
+      px += wx * k; py += wy * k; pz += wz * k;
+      rx += wrx * k; ry += wry * k; rz += wrz * k;
+    } else if (this.swingT > 0 && cat === 'block') {
+      const p = 1 - this.swingT, k = Math.sin(p * Math.PI);
+      rx -= k * 0.5; pz -= k * 0.1;
     }
     // еда
     if (this.useT > 0) {
@@ -390,6 +441,7 @@ export class Weapons {
       py += 0.1; px -= 0.12; pz += 0.1; rx += 0.4 + Math.sin(p * 30) * 0.05;
     }
     if (this.equipT > 0) py -= this.equipT * 0.8;
+    if (this.fists) { this.animateFists(dt, P, moving); px = 0; py = this.equipT > 0 ? -this.equipT * 0.8 : 0; pz = 0; rx = ry = rz = 0; }
     this.hold.position.set(px, py, pz);
     this.hold.rotation.set(rx, ry, rz);
     this.cam.aspect = g.camera.aspect;

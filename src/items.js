@@ -19,12 +19,14 @@ export const ITEMS = {
   smg: { name: 'Пистолет-пулемёт', cat: 'gun', stack: 1, dmg: 22, rate: 0.075, mag: 30, ammo: 'a9', reload: 1.8, spread: 0.032, recoil: 0.011, range: 140, auto: true, sound: 'smg', zoom: 1.35 },
   shotgun: { name: 'Дробовик', cat: 'gun', stack: 1, dmg: 15, pellets: 9, rate: 0.85, mag: 6, ammo: 'a12', reload: 2.4, spread: 0.075, recoil: 0.06, range: 60, auto: false, sound: 'shotgun', zoom: 1.25 },
   rifle: { name: 'Автомат', cat: 'gun', stack: 1, dmg: 38, rate: 0.105, mag: 30, ammo: 'a762', reload: 2.2, spread: 0.022, recoil: 0.017, range: 260, auto: true, sound: 'rifle', zoom: 1.7 },
+  asval: { name: 'АС «Вал»', cat: 'gun', stack: 1, dmg: 36, rate: 0.083, mag: 20, ammo: 'a939', reload: 2.0, spread: 0.019, recoil: 0.013, range: 220, auto: true, sound: 'asval', zoom: 1.8, silent: true, desc: 'Бесшумный автомат: зомби слышат выстрелы только вблизи.' },
   sniper: { name: 'Снайперская винтовка', cat: 'gun', stack: 1, dmg: 150, rate: 1.3, mag: 5, ammo: 'a308', reload: 2.6, spread: 0.03, adsSpread: 0.0008, recoil: 0.08, range: 600, auto: false, sound: 'sniper', zoom: 5, scope: true },
   // патроны
   a9: { name: 'Патроны 9 мм', cat: 'ammo', stack: 120 },
   a12: { name: 'Дробь 12 кал.', cat: 'ammo', stack: 60 },
   a762: { name: 'Патроны 7,62', cat: 'ammo', stack: 120 },
   a308: { name: 'Патроны .308', cat: 'ammo', stack: 60 },
+  a939: { name: 'Патроны 9×39', cat: 'ammo', stack: 100 },
   // еда и медицина
   bandage: { name: 'Бинт', cat: 'med', stack: 10, heal: 20, use: 1.6 },
   medkit: { name: 'Аптечка', cat: 'med', stack: 5, heal: 70, use: 3.5 },
@@ -78,11 +80,11 @@ export const LOOT = {
   medical: [['bandage', 14, 1, 3], ['medkit', 8], ['water', 4], ['cloth', 5, 1, 3], ['tea', 3]],
   police: [['pistol', 6], ['shotgun', 3.5], ['smg', 1.5], ['a9', 10, 8, 20], ['a12', 7, 4, 10], ['bandage', 5, 1, 2], ['medkit', 2.5], ['bat', 2]],
   industrial: [['axe', 4], ['pickaxe', 4], ['hammer', 5], ['machete', 2], ['ipick', 0.8], ['iaxe', 0.8], ['scrap', 10, 2, 6], ['iron', 4, 1, 4], ['wood', 6, 4, 10], ['cloth', 3, 1, 3], ['water', 3]],
-  military: [['rifle', 5], ['sniper', 1.5], ['smg', 3], ['shotgun', 3], ['a762', 10, 10, 30], ['a308', 4, 3, 8], ['a9', 5, 10, 20], ['a12', 4, 5, 10], ['medkit', 5], ['mre', 6], ['water', 4], ['iron', 3, 2, 5]],
+  military: [['rifle', 5], ['asval', 1.6], ['a939', 4, 10, 25], ['sniper', 1.5], ['smg', 3], ['shotgun', 3], ['a762', 10, 10, 30], ['a308', 4, 3, 8], ['a9', 5, 10, 20], ['a12', 4, 5, 10], ['medkit', 5], ['mre', 6], ['water', 4], ['iron', 3, 2, 5]],
   car: [['scrap', 8, 1, 4], ['water', 4], ['a9', 3, 4, 10], ['bandage', 3], ['chips', 3], ['pistol', 0.6], ['cloth', 3, 1, 2]],
-  crash: [['rifle', 4], ['sniper', 2.5], ['a762', 6, 15, 30], ['a308', 4, 5, 10], ['medkit', 4], ['mre', 3], ['iron', 4, 3, 8]],
+  crash: [['rifle', 4], ['asval', 3], ['a939', 4, 15, 30], ['sniper', 2.5], ['a762', 6, 15, 30], ['a308', 4, 5, 10], ['medkit', 4], ['mre', 3], ['iron', 4, 3, 8]],
   zombie: [['cloth', 8, 1, 2], ['can', 2], ['water', 2], ['a9', 2, 3, 8], ['bandage', 2], ['scrap', 3, 1, 2], ['a762', 0.7, 4, 10], ['a12', 0.8, 2, 5]],
-  boss: [['rifle', 5], ['sniper', 3], ['smg', 3], ['a762', 8, 30, 60], ['a308', 5, 10, 20], ['a12', 4, 10, 20], ['medkit', 6, 1, 3], ['iron', 6, 6, 14], ['ipick', 2], ['iaxe', 2], ['mre', 4, 1, 3]],
+  boss: [['rifle', 5], ['asval', 4], ['a939', 5, 20, 40], ['sniper', 3], ['smg', 3], ['a762', 8, 30, 60], ['a308', 5, 10, 20], ['a12', 4, 10, 20], ['medkit', 6, 1, 3], ['iron', 6, 6, 14], ['ipick', 2], ['iaxe', 2], ['mre', 4, 1, 3]],
 };
 
 const ITEM_COUNT = { house: [1, 3], shop: [2, 4], medical: [1, 3], police: [1, 3], industrial: [1, 3], military: [2, 4], car: [1, 2], crash: [3, 4], zombie: [1, 1], boss: [5, 7] };
@@ -155,6 +157,8 @@ export const RECIPES = [
   { out: 'shotgun', n: 1, cost: { iron: 12, wood: 4 }, lvl: 9, station: 'bench' },
   { out: 'rifle', n: 1, cost: { iron: 18, trophy: 1 }, lvl: 12, station: 'bench' },
   { out: 'a308', n: 5, cost: { iron: 3 }, lvl: 12, station: 'bench' },
+  { out: 'a939', n: 10, cost: { iron: 2, scrap: 2 }, lvl: 11, station: 'bench' },
+  { out: 'asval', n: 1, cost: { iron: 20, trophy: 1, cloth: 2 }, lvl: 13, station: 'bench' },
   { out: 'sniper', n: 1, cost: { iron: 22, trophy: 2 }, lvl: 15, station: 'bench' },
 ];
 

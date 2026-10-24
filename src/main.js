@@ -53,21 +53,24 @@ window.addEventListener('resize', () => {
   if (game) game.resize();
   if (menuScene) { menuScene.camera.aspect = innerWidth / innerHeight; menuScene.camera.updateProjectionMatrix(); }
 });
-window.addEventListener('beforeunload', () => { if (game) { game.savePlayer(); game.saveWorld(); } });
+// сохраняемся, когда вкладку закрывают или сворачивают
+window.addEventListener('beforeunload', () => { if (game) game.saveAll(false); });
+window.addEventListener('pagehide', () => { if (game) game.saveAll(false); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && game) game.saveAll(false); });
 
 // ---------- фон меню: облёт города ----------
 let menuScene = null;
 function buildMenuScene() {
-  const level = C.LEVELS[0];
+  const level = C.makeLevel('normal');
   const world = new World(level, level.seed);
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(level.sky.day);
-  scene.fog = new THREE.Fog(level.sky.day, 120, 330);
+  scene.background = new THREE.Color(C.BIOMES.forest.sky.day);
+  scene.fog = new THREE.Fog(C.BIOMES.forest.sky.day, 120, 330);
   scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x5a4a3a, 1.4));
   const sun = new THREE.DirectionalLight(0xffe2c0, 2.4);
   sun.position.set(200, 160, 120);
   scene.add(sun);
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshLambertMaterial({ color: level.colors.water, transparent: true, opacity: 0.85 }));
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshLambertMaterial({ color: C.WATER_COLOR, transparent: true, opacity: 0.85 }));
   water.rotation.x = -Math.PI / 2;
   scene.add(water);
   const fake = { world, scene, settings: { view: 3 } };
@@ -118,66 +121,71 @@ function showPanel(name) {
 }
 document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { sfx.init(); sfx.click(); showPanel(b.dataset.go); }));
 
-let selLevel = null;
+// ---------- мир и сложность ----------
+const WKEY = SAVE + 'world:' + C.WORLD_ID;
+let selDiff = prof.diff || 'normal';
+function loadWorldSave() {
+  try { return JSON.parse(localStorage.getItem(WKEY) || 'null'); } catch (_) { return null; }
+}
 function renderLevels() {
-  const done = loadCompleted();
-  const el = $('m-levels');
+  const save = loadWorldSave();
+  const el = $('m-diff');
   el.innerHTML = '';
-  C.LEVELS.forEach((L, idx) => {
+  for (const d of C.DIFFICULTIES) {
     const b = document.createElement('button');
-    b.className = 'lvl' + (selLevel === L ? ' on' : '');
-    b.innerHTML = `<canvas class="pic" width="120" height="70"></canvas><div class="info"><div class="tag">${L.tag}</div><div class="nm">${L.name}</div><div class="ds">${L.desc}</div><div class="skulls">${'☠'.repeat(L.difficulty)}<span style="opacity:.25">${'☠'.repeat(3 - L.difficulty)}</span> сложность</div>${done.includes(L.id) ? '<div class="done">✔ пройден — кровавая луна пережита</div>' : ''}${+localStorage.getItem(SAVE + 'record:' + L.id) ? '<div class="done" style="color:#d9b44a">рекорд: ' + localStorage.getItem(SAVE + 'record:' + L.id) + ' дн.</div>' : ''}</div>`;
-    b.onclick = () => { selLevel = L; sfx.click(); renderLevels(); };
+    b.className = 'btn small' + (selDiff === d.id ? ' on' : '');
+    b.textContent = d.name;
+    b.title = d.desc;
+    b.onclick = () => { selDiff = d.id; prof.diff = d.id; saveProfile(); sfx.click(); renderLevels(); };
     el.appendChild(b);
-    drawPreview(b.querySelector('canvas'), L, idx);
-  });
-  const det = $('m-level-detail');
-  det.classList.toggle('hidden', !selLevel);
-  if (selLevel) {
-    let save = null;
-    try { save = JSON.parse(localStorage.getItem(SAVE + 'world:' + selLevel.id) || 'null'); } catch (_) { save = null; }
-    $('m-continue').disabled = !save;
-    $('m-save-info').textContent = save
-      ? `Сохранённый мир: день ${save.d}, построено блоков: ${(save.blocks || []).length}. Код комнаты: ${save.code}.`
-      : 'Сохранений нет. «Новый мир» создаст остров с нуля.';
   }
+  const rec = +(localStorage.getItem(SAVE + 'record:' + C.WORLD_ID) || 0);
+  const done = loadCompleted().includes(C.WORLD_ID);
+  $('m-record').textContent = (C.DIFFICULTIES.find(d => d.id === selDiff) || {}).desc + (rec ? ` Рекорд: ${rec} дн.` : '') + (done ? ' Кровавая луна уже пережита.' : '');
+  $('m-continue').disabled = !save;
+  $('m-save-info').textContent = save
+    ? `Сохранённый мир: день ${save.d}, построено блоков: ${(save.blocks || []).length}, сложность: ${(C.DIFFICULTIES.find(d => d.id === save.diff) || C.DIFFICULTIES[1]).name.toLowerCase()}. Код комнаты: ${save.code}.`
+    : 'Сохранений нет. «Новый мир» создаст остров с нуля.';
+  drawPreview();
 }
 
-const previewCache = new Map();
-function drawPreview(cv, L, idx) {
+let previewImg = null;
+function drawPreview() {
+  const cv = $('m-preview');
   const draw = () => {
-    let img = previewCache.get(L.id);
-    if (!img) {
-      const w = new World(L, L.seed, { layout: false });
-      const W = 120, H = 70;
-      const x = cv.getContext('2d');
-      img = x.createImageData(W, H);
+    if (!previewImg) {
+      const lvl = C.makeLevel('normal');
+      const w = new World(lvl, lvl.seed, { layout: false });
+      const N = 110;
+      const ctx = cv.getContext('2d');
+      previewImg = ctx.createImageData(N, N);
       const rgb = h => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
-      const cl = L.colors;
-      for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
-        const wx = -C.HALF + (i + 0.5) / W * C.WORLD_SIZE, wz = -C.HALF * 0.58 + (j + 0.5) / H * C.WORLD_SIZE * 0.58;
-        const h = w.rawHeight(wx, wz);
-        const hl = w.rawHeight(wx - 25, wz);
-        let c = h < -6 ? rgb(0x1d4a6e) : h < 0 ? rgb(cl.water) : h < 1.4 ? rgb(cl.sand) : h > L.snowLine ? rgb(cl.snow) : Math.abs(h - hl) > 9 ? rgb(cl.rock) : rgb(cl.grass);
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+        const wx = -C.HALF + (i + 0.5) / N * C.WORLD_SIZE, wz = -C.HALF + (j + 0.5) / N * C.WORLD_SIZE;
+        const h = w.rawHeight(wx, wz), hl = w.rawHeight(wx - 28, wz);
+        const B = C.BIOMES[w.biomePick(wx, wz, ((i * 7 + j * 13) % 10) / 10)];
+        const cl = B.colors;
+        const c = h < -6 ? rgb(0x1d4a6e) : h < 0 ? rgb(C.WATER_COLOR) : h < 1.4 ? rgb(cl.sand) : h > B.snowLine ? rgb(cl.snow) : Math.abs(h - hl) > 9 ? rgb(cl.rock) : rgb(cl.grass);
         const k = h < 0 ? 1 : Math.max(0.7, Math.min(1.3, 1 + (h - hl) * 0.04));
-        const o = (j * W + i) * 4;
-        img.data[o] = c[0] * k; img.data[o + 1] = c[1] * k; img.data[o + 2] = c[2] * k; img.data[o + 3] = 255;
+        const o = (j * N + i) * 4;
+        previewImg.data[o] = c[0] * k; previewImg.data[o + 1] = c[1] * k; previewImg.data[o + 2] = c[2] * k; previewImg.data[o + 3] = 255;
       }
-      previewCache.set(L.id, img);
     }
-    cv.getContext('2d').putImageData(img, 0, 0);
+    const tmp = document.createElement('canvas');
+    tmp.width = previewImg.width; tmp.height = previewImg.height;
+    tmp.getContext('2d').putImageData(previewImg, 0, 0);
+    const ctx = cv.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tmp, 0, 0, cv.width, cv.height);
   };
-  if (previewCache.has(L.id)) draw(); else setTimeout(draw, 30 + idx * 30);
+  if (previewImg) draw(); else setTimeout(draw, 40);
 }
 
 $('m-new').onclick = () => {
-  if (!selLevel) return;
-  let save = null;
-  try { save = localStorage.getItem(SAVE + 'world:' + selLevel.id); } catch (_) { save = null; }
-  if (save && !confirm('Начать заново? Сохранённый мир «' + selLevel.name + '» будет удалён.')) return;
-  startHost(selLevel, false);
+  if (loadWorldSave() && !confirm('Начать заново? Сохранённый мир будет удалён.')) return;
+  startHost(C.makeLevel(selDiff), false);
 };
-$('m-continue').onclick = () => { if (selLevel) startHost(selLevel, true); };
+$('m-continue').onclick = () => { const sv = loadWorldSave(); if (sv) startHost(C.makeLevel(sv.diff || 'normal'), true); };
 $('m-join').onclick = () => joinGame($('m-code').value);
 $('m-code').addEventListener('keydown', e => { e.stopPropagation(); if (e.code === 'Enter') joinGame($('m-code').value); });
 $('m-code').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
@@ -193,7 +201,7 @@ function showMenu(msg) {
   $('menu').classList.remove('hidden');
   $('loading').classList.add('hidden');
   renderLevels();
-  showPanel(selLevel ? 'levels' : 'levels');
+  showPanel('levels');
   if (msg) message('Игра завершена', msg);
 }
 
@@ -252,7 +260,7 @@ async function joinGame(raw) {
   const net = new Net();
   try {
     const w = await net.join(code, { t: 'hello', name: prof.name, color: prof.color, ver: C.VERSION });
-    const level = C.levelById(w.level);
+    const level = C.makeLevel(w.diff || 'normal');
     st.textContent = '';
     await bootGame({ level, seed: w.seed, mode: 'client', net, code, welcome: w });
   } catch (e) {
@@ -311,8 +319,6 @@ try {
 } catch (e) { console.warn('ticker', e); }
 
 showMenu();
-selLevel = C.LEVELS[0];
-renderLevels();
 requestAnimationFrame(loop);
 setTimeout(() => { try { buildMenuScene(); } catch (e) { console.warn(e); } }, 50);
 

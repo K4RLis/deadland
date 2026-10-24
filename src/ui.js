@@ -70,6 +70,7 @@ export class UI {
     g.inv.onChange = () => { this.dirtyHud = true; if (this.panel === 'inv') this.renderInv(); };
     $('p-resume').onclick = () => this.closePanel();
     $('p-quit').onclick = () => g.quit();
+    $('p-save').onclick = () => g.saveAll(true);
     $('p-settings-btn').onclick = () => {
       const el = $('pause-settings');
       el.classList.toggle('hidden');
@@ -193,6 +194,14 @@ export class UI {
     while (f.children.length > 6) f.firstChild.remove();
   }
 
+  savedNote(text) {
+    const el = $('saved');
+    el.textContent = '✓ ' + text;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+  }
+
   pickupNote(id, n) {
     this.feed(`<span class="pickup">+${n} ${esc(ITEMS[id].name)}</span>`);
   }
@@ -277,11 +286,13 @@ export class UI {
       this.hudT = 0.25;
       const hh = Math.floor(g.dayTime * 24), mm = Math.floor((g.dayTime * 24 - hh) * 60);
       let ct = `День ${g.day} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+      const B = C.BIOMES[g.biomeHere()];
+      ct += `<br><span class="bio">${B.name} · опасность ${'●'.repeat(B.danger)}${'○'.repeat(3 - B.danger)}</span>`;
       if (g.hordeActive) ct += `<br><span class="horde">КРОВАВАЯ ЛУНА</span>`;
       else if (g.day % C.HORDE_EVERY === 0) ct += `<br><span class="horde">орда этой ночью</span>`;
       $('clock').innerHTML = ct;
       const n = g.roster.size;
-      $('room').innerHTML = g.solo ? `${esc(g.level.name)} · одиночная игра`
+      $('room').innerHTML = g.solo ? `${esc(g.level.name)} · ${esc(g.level.diff.name.toLowerCase())} · одиночная игра`
         : (g.isHost ? `Комната <b>${esc(g.code)}</b> · игроков ${n}/${C.MAX_PLAYERS}` : `Комната <b>${esc(g.code)}</b> · игроков ${n}`);
       const xpN = xpNeed(P.level);
       $('xp').querySelector('i').style.width = Math.min(100, P.xp / xpN * 100) + '%';
@@ -433,7 +444,8 @@ export class UI {
       <div class="kv">Урон оружия <b>+${Math.round((pk.gun - 1) * 100)}%</b></div>
       <div class="kv">Убито зомби <b>${P.kills}</b></div>
       <div class="kv">Убито боссов <b>${P.stats.boss || 0}</b></div>
-      <div class="kv">Карта <b>${esc(g.level.name)}</b></div>
+      <div class="kv">Биом <b>${esc(C.BIOMES[g.biomeHere()].name)}</b></div>
+      <div class="kv">Сложность <b>${esc(g.level.diff.name)}</b></div>
       <div class="kv">День <b>${g.day}</b></div>
       <h3 style="margin-top:12px">Задания</h3>
       ${QUESTS.map((q, i) => `<div class="kv" style="${i < P.quest ? 'opacity:.45;text-decoration:line-through' : i === P.quest ? 'color:#e8e4da' : 'opacity:.6'}">${esc(q.text)}</div>`).slice(0, Math.min(QUESTS.length, P.quest + 4)).join('')}
