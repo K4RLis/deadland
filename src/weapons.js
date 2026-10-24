@@ -4,7 +4,7 @@ import { ITEMS, FISTS } from './items.js';
 import { itemModel, makeViewArms, makeFist } from './models.js';
 import { BLOCK_TYPES } from './blocks.js';
 
-const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.69, asval: -0.61, sniper: -0.78 };
+const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.69, asval: -0.5, sniper: -0.78 };
 const easeOut = t => 1 - (1 - t) * (1 - t);
 const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3(), _o = new THREE.Vector3(), _e = new THREE.Vector3();

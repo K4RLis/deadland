@@ -44,6 +44,13 @@ export class MeshBuilder {
     this.c.push(r, g, b, r, g, b, r, g, b);
   }
 
+  // треугольник с нормалями вершин (гладкое затенение, без разброса яркости граней)
+  triN(a, b, c, na, nb, nc, col) {
+    this.p.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+    this.n.push(na.x, na.y, na.z, nb.x, nb.y, nb.z, nc.x, nc.y, nc.z);
+    this.c.push(col[0], col[1], col[2], col[0], col[1], col[2], col[0], col[1], col[2]);
+  }
+
   // четырёхугольник a-b-c-d против часовой стрелки (если смотреть снаружи)
   quad(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, col) {
     this.tri(ax, ay, az, bx, by, bz, cx, cy, cz, col);
