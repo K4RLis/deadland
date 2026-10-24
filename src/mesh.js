@@ -17,6 +17,7 @@ export function shade(col, f) {
 }
 
 const _v = new THREE.Vector3();
+const _rm = new THREE.Matrix4(), _re = new THREE.Euler();
 
 export class MeshBuilder {
   // facet — разброс яркости между треугольниками: гранёный «полигональный» вид
@@ -72,6 +73,56 @@ export class MeshBuilder {
       this.quad(x0, a, z1, x1, a, z1, x1, b, z1, x0, b, z1, side2);
       this.quad(x1, a, z0, x0, a, z0, x0, b, z0, x1, b, z0, side2);
     }
+  }
+
+  // «скруглённый» бокс с центром (cx, cy, cz): сечение — восьмиугольник со скошенными рёбрами, торцы со скосом.
+  // o.c — скос вертикальных рёбер (доля меньшей стороны), o.b — скос торцов, o.tx/o.tz — масштаб верхнего
+  // сечения (сужение к верху), o.rx/o.ry/o.rz — поворот вокруг центра
+  rbox(cx, cy, cz, w, h, d, col, o = {}) {
+    const m = Math.min(w, d), cf = o.c ?? 0.25;
+    const c = m * cf;
+    const bv = Math.min(h * 0.4, m * 0.4, Math.min(m, h) * (o.b ?? cf * 0.6));
+    const tx = o.tx ?? 1, tz = o.tz ?? 1;
+    const ring = (y, ins) => {
+      const t = (y + h / 2) / h, sx = 1 + (tx - 1) * t, sz = 1 + (tz - 1) * t;
+      const hw = w / 2 - ins, hd = d / 2 - ins;
+      let pts;
+      if (c > 1e-5) {
+        const k = Math.max(c * 0.3, c - ins * 0.414);
+        pts = [[hw - k, -hd], [hw, -hd + k], [hw, hd - k], [hw - k, hd], [-hw + k, hd], [-hw, hd - k], [-hw, -hd + k], [-hw + k, -hd]];
+      } else pts = [[hw, -hd], [hw, hd], [-hw, hd], [-hw, -hd]];
+      return pts.map(([x, z]) => [x * sx, y, z * sz]);
+    };
+    const ys = bv > 1e-4 ? [[-h / 2, bv], [-h / 2 + bv, 0], [h / 2 - bv, 0], [h / 2, bv]] : [[-h / 2, 0], [h / 2, 0]];
+    let rot = null;
+    if (o.rx || o.ry || o.rz) { _re.set(o.rx || 0, o.ry || 0, o.rz || 0); rot = _rm.makeRotationFromEuler(_re); }
+    const R = ys.map(([y, ins]) => ring(y, ins).map(p => {
+      _v.set(p[0], p[1], p[2]);
+      if (rot) _v.applyMatrix4(rot);
+      return [_v.x + cx, _v.y + cy, _v.z + cz];
+    }));
+    const ctr = [cx, cy, cz], n = R[0].length;
+    for (let k = 0; k + 1 < R.length; k++) for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      this.otri(R[k][i], R[k][j], R[k + 1][j], ctr, col);
+      this.otri(R[k][i], R[k + 1][j], R[k + 1][i], ctr, col);
+    }
+    for (const r of [R[0], R[R.length - 1]]) for (let i = 1; i + 1 < n; i++) this.otri(r[0], r[i], r[i + 1], ctr, col);
+  }
+
+  // треугольник выпуклого тела: разворачивается наружу от ctr, яркость — по наклону грани
+  otri(a, b, c, ctr, col) {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+    const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz);
+    if (l < 1e-12) return;
+    const mx = (a[0] + b[0] + c[0]) / 3 - ctr[0], my = (a[1] + b[1] + c[1]) / 3 - ctr[1], mz = (a[2] + b[2] + c[2]) / 3 - ctr[2];
+    const out = nx * mx + ny * my + nz * mz >= 0;
+    const f = 0.9 + 0.1 * (out ? ny : -ny) / l;
+    const cc = [col[0] * f, col[1] * f, col[2] * f];
+    if (out) this.tri(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], cc);
+    else this.tri(a[0], a[1], a[2], c[0], c[1], c[2], b[0], b[1], b[2], cc);
   }
 
   // треугольная призма (двускатная крыша) с рядами черепицы

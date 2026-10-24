@@ -242,6 +242,7 @@ function pal(rng, L, over = {}) {
     white: 0xf2f2ee, red: 0xd03030, concrete: 0x9a9a96, mil: 0x5f6b45, mil2: 0x4a5536, brick: 0x8a4a3a,
     tent: snow ? 0xd9ddd5 : 0x6b7a4f, body: pick(CARS, rng), heli: 0x4d5a3c, scorch: 0x2a2622,
     fence: 0x7d8a7a, sand: 0xbca77a, yellow: 0xe8c547, blue: 0x1f4e9c,
+    tire: 0x1c1c1c, chrome: 0xb8bcc0, lamp: 0xf2eed8, tail: 0xa82020, plate: 0xe6e6de,
     ...over,
   };
 }
@@ -358,10 +359,42 @@ const P_ = {
     bx(P, -1.0, 0.35, -2.2, 1.0, 1.05, 2.2, 'body');
     bx(P, -0.9, 1.05, -1.1, 0.9, 1.5, 0.9, 'glass2');
     bx(P, -0.93, 1.5, -1.15, 0.93, 1.62, 0.95, 'body', NOSOLID);
-    for (const [x, z] of [[-1.02, 1.35], [1.02, 1.35], [-1.02, -1.35], [1.02, -1.35]]) bx(P, x - 0.16, 0, z - 0.36, x + 0.16, 0.72, z + 0.36, 'dark', NOSOLID);
-    bx(P, -0.85, 0.7, 2.2, -0.5, 0.9, 2.25, 'yellow', NOSOLID);
-    bx(P, 0.5, 0.7, 2.2, 0.85, 0.9, 2.25, 'yellow', NOSOLID);
-    if (rng() < 0.6) bx(P, -0.6, 1.05, 1.0, 0.4, 1.07, 1.8, 'rust', NOSOLID);
+    // капот и крышка багажника, стойки поверх стёкол, дворники
+    bx(P, -0.95, 1.05, 0.92, 0.95, 1.09, 2.15, 'body', NOSOLID);
+    bx(P, -0.95, 1.05, -2.15, 0.95, 1.08, -1.12, 'body', NOSOLID);
+    for (const z of [0.88, -0.12, -1.08]) for (const s of [-1, 1]) bx(P, s * 0.85, 1.05, z - 0.05, s * 0.93, 1.5, z + 0.05, 'body', NOSOLID);
+    bx(P, -0.6, 1.09, 0.93, -0.06, 1.11, 0.97, 'dark', NOSOLID);
+    bx(P, 0.06, 1.09, 0.93, 0.6, 1.11, 0.97, 'dark', NOSOLID);
+    // бамперы, решётка, номера, выхлоп
+    bx(P, -1.04, 0.3, 2.18, 1.04, 0.52, 2.34, 'dark', NOSOLID);
+    bx(P, -1.04, 0.3, -2.34, 1.04, 0.52, -2.18, 'dark', NOSOLID);
+    bx(P, -0.5, 0.6, 2.2, 0.5, 0.92, 2.24, 'chrome', NOSOLID);
+    for (const y of [0.66, 0.74, 0.82]) bx(P, -0.47, y, 2.235, 0.47, y + 0.04, 2.25, 'dark', NOSOLID);
+    bx(P, -0.25, 0.36, 2.34, 0.25, 0.48, 2.36, 'plate', NOSOLID);
+    bx(P, -0.25, 0.36, -2.36, 0.25, 0.48, -2.34, 'plate', NOSOLID);
+    bx(P, 0.55, 0.26, -2.42, 0.65, 0.34, -2.2, 'dark', NOSOLID);
+    for (const s of [-1, 1]) {
+      bx(P, s * 0.56, 0.68, 2.2, s * 0.92, 0.93, 2.245, 'chrome', NOSOLID);
+      bx(P, s * 0.6, 0.71, 2.24, s * 0.88, 0.9, 2.265, 'lamp', NOSOLID);
+      bx(P, s * 0.6, 0.75, -2.24, s * 0.92, 0.95, -2.2, 'tail', NOSOLID);
+      bx(P, s * 0.98, 1.06, 0.7, s * 1.2, 1.24, 0.84, 'body', NOSOLID);
+      bx(P, s * 1.0, 0.82, 0.24, s * 1.035, 0.86, 0.44, 'chrome', NOSOLID);
+      bx(P, s * 1.0, 0.82, -0.9, s * 1.035, 0.86, -0.7, 'chrome', NOSOLID);
+      for (const z of [0.88, -0.1, -1.06]) bx(P, s * 0.995, 0.4, z - 0.015, s * 1.012, 1.05, z + 0.015, 'dark', NOSOLID);
+      bx(P, s * 0.99, 0.35, -0.95, s * 1.015, 0.45, 0.95, 'dark', NOSOLID);
+    }
+    // колёса: восьмигранная шина, колпак, ступица; арки над ними
+    for (const [x, z] of [[-1.02, 1.35], [1.02, 1.35], [-1.02, -1.35], [1.02, -1.35]]) {
+      const o = Math.sign(x);
+      bx(P, x - o * 0.03, 0.35, z - 0.44, x + o * 0.0, 0.8, z + 0.44, 'dark', NOSOLID);
+      bx(P, x - 0.15, 0.1, z - 0.36, x + 0.15, 0.62, z + 0.36, 'tire', NOSOLID);
+      bx(P, x - 0.15, 0, z - 0.26, x + 0.15, 0.72, z + 0.26, 'tire', NOSOLID);
+      bx(P, x + o * 0.15, 0.18, z - 0.17, x + o * 0.17, 0.54, z + 0.17, 'chrome', NOSOLID);
+      bx(P, x + o * 0.15, 0.23, z - 0.22, x + o * 0.17, 0.49, z + 0.22, 'chrome', NOSOLID);
+      bx(P, x + o * 0.17, 0.31, z - 0.05, x + o * 0.19, 0.41, z + 0.05, 'dark', NOSOLID);
+    }
+    if (rng() < 0.6) bx(P, -0.6, 1.09, 1.0, 0.4, 1.1, 1.8, 'rust', NOSOLID);
+    if (rng() < 0.4) { const rz0 = -1.9 + rng() * 0.6; bx(P, 0.995, 0.5, rz0, 1.014, 0.78, rz0 + 0.5, 'rust', NOSOLID); }
     C.push({ kind: 'trunk', tier: 'car', x: 0, y: 0.35, z: -1.95, swap: false });
     const body = pick(CARS, rng);
     return { P, C, pal: pal(rng, L, { body, glass2: 0x2f3d48, rust: 0x6a4a30 }) };
@@ -374,7 +407,33 @@ const P_ = {
     bx(P, -1.3, 1.0, -3.3, -1.2, 1.6, 1.6, 'mil2');
     bx(P, 1.2, 1.0, -3.3, 1.3, 1.6, 1.6, 'mil2');
     P.push({ t: 1, a: [-1.3, 1.6, -3.3], b: [1.3, 2.9, 1.5], c: 'tent', rx: false });
-    for (const [x, z] of [[-1.2, 2.4], [1.2, 2.4], [-1.2, -1.2], [1.2, -1.2], [-1.2, -2.5], [1.2, -2.5]]) bx(P, x - 0.2, 0, z - 0.45, x + 0.2, 0.9, z + 0.45, 'dark', NOSOLID);
+    for (const [x, z] of [[-1.2, 2.4], [1.2, 2.4], [-1.2, -1.2], [1.2, -1.2], [-1.2, -2.5], [1.2, -2.5]]) {
+      const o = Math.sign(x);
+      bx(P, x - 0.2, 0.13, z - 0.45, x + 0.2, 0.77, z + 0.45, 'tire', NOSOLID);
+      bx(P, x - 0.2, 0, z - 0.32, x + 0.2, 0.9, z + 0.32, 'tire', NOSOLID);
+      bx(P, x + o * 0.2, 0.25, z - 0.2, x + o * 0.22, 0.65, z + 0.2, 'mil2', NOSOLID);
+      bx(P, x + o * 0.22, 0.38, z - 0.07, x + o * 0.24, 0.52, z + 0.07, 'dark', NOSOLID);
+    }
+    // бампер, решётка, фары, зеркала, баки, ступени, выхлоп, запаска
+    bx(P, -1.32, 0.35, 3.3, 1.32, 0.62, 3.5, 'dark', NOSOLID);
+    bx(P, -0.7, 0.72, 3.3, 0.7, 1.42, 3.36, 'dark', NOSOLID);
+    for (const y of [0.8, 0.95, 1.1, 1.25]) bx(P, -0.68, y, 3.355, 0.68, y + 0.06, 3.38, 'mil2', NOSOLID);
+    bx(P, -0.2, 0.4, 3.5, 0.2, 0.52, 3.52, 'plate', NOSOLID);
+    bx(P, 0.95, 2.4, 1.66, 1.07, 3.05, 1.78, 'dark', NOSOLID);
+    bx(P, -0.45, 1.0, 1.25, 0.45, 1.75, 1.55, 'tire', NOSOLID);
+    bx(P, -0.2, 1.22, 1.22, 0.2, 1.52, 1.25, 'mil2', NOSOLID);
+    for (const s of [-1, 1]) {
+      bx(P, s * 0.82, 0.95, 3.3, s * 1.12, 1.22, 3.39, 'lamp', NOSOLID);
+      bx(P, s * 1.25, 1.65, 2.9, s * 1.48, 2.15, 2.98, 'dark', NOSOLID);
+      bx(P, s * 1.25, 2.0, 2.94, s * 1.3, 2.05, 3.2, 'dark', NOSOLID);
+      bx(P, s * 1.25, 0.55, -0.3, s * 1.42, 0.92, 0.9, 'mil2', NOSOLID);
+      bx(P, s * 1.25, 0.88, 0.0, s * 1.43, 0.9, 0.3, 'dark', NOSOLID);
+      bx(P, s * 1.25, 0.45, 2.0, s * 1.42, 0.52, 2.55, 'dark', NOSOLID);
+      bx(P, s * 1.25, 0.5, 1.7, s * 1.265, 2.3, 1.75, 'dark', NOSOLID);
+      bx(P, s * 1.25, 1.55, 2.0, s * 1.265, 2.25, 2.95, 'glass2', NOSOLID);
+      bx(P, s * 1.25, 1.2, 2.2, s * 1.265, 1.27, 2.4, 'chrome', NOSOLID);
+      bx(P, s * 0.95, 0.6, -3.36, s * 1.2, 0.75, -3.3, 'tail', NOSOLID);
+    }
     C.push({ kind: 'mcrate', tier: 'military', x: 0, y: 1.0, z: -1.0, swap: true });
     return { P, C, pal: pal(rng, L, { glass2: 0x2f3d48 }) };
   },

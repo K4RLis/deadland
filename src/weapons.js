@@ -1,7 +1,7 @@
 // Предмет в руках: стрельба, ближний бой, добыча ресурсов, еда/лечение, установка блоков.
 import * as THREE from 'three';
 import { ITEMS, FISTS } from './items.js';
-import { itemModel, part } from './models.js';
+import { itemModel, makeViewArms, makeFist } from './models.js';
 import { BLOCK_TYPES } from './blocks.js';
 
 const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.69, asval: -0.57, sniper: -0.74 };
@@ -56,26 +56,15 @@ export class Weapons {
     const skin = 0xe0ac80, sleeve = this.g.myColor || 0x3b6fb6;
     this.fists = null;
     if (!def) {
-      // два кулака в стойке: кисть, костяшки, большой палец, рукав с манжетой
+      // два кулака в стойке
       this.fists = [];
       for (const side of [1, -1]) {
-        const h = new THREE.Group();
-        part(h, 0.1, 0.095, 0.12, skin, 0, 0, 0);
-        part(h, 0.102, 0.035, 0.05, 0xc8946a, 0, 0.034, -0.045);
-        part(h, 0.03, 0.04, 0.065, skin, -side * 0.058, -0.012, -0.015);
-        part(h, 0.085, 0.085, 0.34, sleeve, 0, -0.1, 0.19, 0.62);
-        part(h, 0.092, 0.092, 0.05, 0x2a2a2a, 0, -0.03, 0.065, 0.62);
+        const h = makeFist(side, skin, sleeve);
         h.scale.setScalar(0.85);
         this.model.add(h);
         this.fists.push({ g: h, side });
       }
-    } else if (def.cat === 'melee' || def.cat === 'gun') {
-      part(this.model, 0.085, 0.085, 0.42, sleeve, 0.0, -0.08, 0.26, 0.15);
-      part(this.model, 0.08, 0.08, 0.09, skin, 0.0, -0.05, 0.03);
-    } else {
-      part(this.model, 0.085, 0.085, 0.42, sleeve, 0.04, -0.12, 0.25, 0.2);
-      part(this.model, 0.08, 0.08, 0.09, skin, 0.02, -0.08, 0.04);
-    }
+    } else this.model.add(makeViewArms(id, def.cat, skin, sleeve));
     if (def && def.cat === 'gun') { this.flash.position.set(0, 0.03, MUZZLE[id] ?? -0.4); this.model.add(this.flash); }
     this.model.traverse(o => { o.castShadow = false; });
     this.hold.add(this.model);

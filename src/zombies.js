@@ -1,7 +1,7 @@
 // Зомби: симуляция на хосте (ИИ, поиск пути, атаки блоков) и отрисовка у всех.
 import * as THREE from 'three';
 import * as C from './config.js';
-import { ZOMBIE_LOOK, animate, makeNameTag } from './models.js';
+import { ZOMBIE_LOOK, animate, makeNameTag, setLod } from './models.js';
 import { angleLerp, clamp } from './rng.js';
 import { topAt, rayBox } from './physics.js';
 
@@ -591,6 +591,8 @@ export class ZombieViews {
       v.mesh.rotation.y = v.yaw;
       const d = Math.hypot(v.x - cam.x, v.z - cam.z);
       v.mesh.visible = d < 170;
+      const far = d > (v.T.boss ? 80 : 40);
+      if (v.far !== far) { v.far = far; setLod(v.mesh, far); }
       if (v.st === 3) v.atk = (v.atk + dt * 2.2) % 1; else v.atk = 0;
       if (v.mesh.visible && d < 90) animate(v.mesh, dt, sp, { atk: v.st === 3 ? Math.sin(v.atk * Math.PI) : 0 });
       v.groanT -= dt;
