@@ -1,0 +1,323 @@
+// Точка входа: меню, профиль, запуск/подключение к миру, главный цикл.
+import * as THREE from 'three';
+import * as C from './config.js';
+import { ITEMS } from './items.js';
+import { renderIcons, PLAYER_COLORS } from './models.js';
+import { Input } from './input.js';
+import { Sfx } from './audio.js';
+import { UI, buildSettings } from './ui.js';
+import { Game, SAVE, loadCompleted } from './game.js';
+import { Net, randomCode } from './net.js';
+import { World } from './world.js';
+import { ChunkRenderer } from './chunks.js';
+
+const $ = id => document.getElementById(id);
+const canvas = $('game');
+
+// ---------- профиль ----------
+function loadProfile() {
+  let p = null;
+  try { p = JSON.parse(localStorage.getItem(SAVE + 'profile') || 'null'); } catch (_) { p = null; }
+  p = p || {};
+  const names = ['Выживший', 'Сталкер', 'Бродяга', 'Егерь', 'Механик', 'Медик'];
+  return {
+    name: p.name || names[Math.floor(Math.random() * names.length)] + Math.floor(Math.random() * 90 + 10),
+    color: p.color ?? PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)],
+    settings: { ...C.DEFAULT_SETTINGS, ...(p.settings || {}) },
+  };
+}
+const prof = loadProfile();
+function saveProfile() {
+  try { localStorage.setItem(SAVE + 'profile', JSON.stringify(prof)); } catch (_) { /* ignore */ }
+}
+
+// ---------- рендер и системы ----------
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1) * prof.settings.scale);
+renderer.setSize(innerWidth, innerHeight);
+
+const input = new Input();
+const sfx = new Sfx();
+sfx.setVolume(prof.settings.volume);
+const icons = renderIcons(Object.keys(ITEMS));
+const ui = new UI(icons, sfx, canvas);
+let game = null;
+
+document.addEventListener('mousemove', e => {
+  if (game && ui.captured) game.player.look(e.movementX, e.movementY, prof.settings.sens);
+});
+window.addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  if (game) game.resize();
+  if (menuScene) { menuScene.camera.aspect = innerWidth / innerHeight; menuScene.camera.updateProjectionMatrix(); }
+});
+window.addEventListener('beforeunload', () => { if (game) { game.savePlayer(); game.saveWorld(); } });
+
+// ---------- фон меню: облёт города ----------
+let menuScene = null;
+function buildMenuScene() {
+  const level = C.LEVELS[0];
+  const world = new World(level, level.seed);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(level.sky.day);
+  scene.fog = new THREE.Fog(level.sky.day, 120, 330);
+  scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x5a4a3a, 1.4));
+  const sun = new THREE.DirectionalLight(0xffe2c0, 2.4);
+  sun.position.set(200, 160, 120);
+  scene.add(sun);
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshLambertMaterial({ color: level.colors.water, transparent: true, opacity: 0.85 }));
+  water.rotation.x = -Math.PI / 2;
+  scene.add(water);
+  const fake = { world, scene, settings: { view: 3 } };
+  const chunks = new ChunkRenderer(fake);
+  const town = world.towns[0];
+  const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 1200);
+  menuScene = { world, scene, chunks, camera, town, t: 0.6 };
+  $('menu').classList.add('over-game');
+}
+
+function menuFrame(dt) {
+  if (!menuScene) { renderer.setClearColor(0x101315); renderer.clear(); return; }
+  const m = menuScene;
+  m.t += dt * 0.025;
+  const r = m.town.r + 40;
+  const x = m.town.x + Math.cos(m.t) * r, z = m.town.z + Math.sin(m.t) * r;
+  const y = Math.max(m.world.height(x, z), 0) + 38;
+  m.camera.position.set(x, y, z);
+  m.camera.lookAt(m.town.x, m.town.h + 4, m.town.z);
+  m.chunks.update(x, z, false);
+  renderer.autoClear = true;
+  renderer.render(m.scene, m.camera);
+}
+
+// ---------- меню ----------
+$('m-ver').textContent = 'версия ' + C.VERSION + ' · мир 3000×3000 м · до ' + C.MAX_PLAYERS + ' игроков';
+const nameInput = $('m-name');
+nameInput.value = prof.name;
+nameInput.addEventListener('input', () => { prof.name = nameInput.value.trim().slice(0, 16) || 'Выживший'; saveProfile(); });
+
+function renderSwatches() {
+  const el = $('m-colors');
+  el.innerHTML = '';
+  for (const c of PLAYER_COLORS) {
+    const i = document.createElement('i');
+    i.style.background = '#' + c.toString(16).padStart(6, '0');
+    if (c === prof.color) i.className = 'on';
+    i.onclick = () => { prof.color = c; saveProfile(); renderSwatches(); };
+    el.appendChild(i);
+  }
+}
+renderSwatches();
+
+function showPanel(name) {
+  for (const p of ['levels', 'join', 'settings', 'help']) $('p-' + p).classList.toggle('hidden', p !== name);
+  if (name === 'settings') buildSettings($('m-settings'), prof.settings, () => { saveProfile(); sfx.setVolume(prof.settings.volume); renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1) * prof.settings.scale); renderer.setSize(innerWidth, innerHeight); });
+  if (name === 'join') setTimeout(() => $('m-code').focus(), 0);
+}
+document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { sfx.init(); sfx.click(); showPanel(b.dataset.go); }));
+
+let selLevel = null;
+function renderLevels() {
+  const done = loadCompleted();
+  const el = $('m-levels');
+  el.innerHTML = '';
+  C.LEVELS.forEach((L, idx) => {
+    const b = document.createElement('button');
+    b.className = 'lvl' + (selLevel === L ? ' on' : '');
+    b.innerHTML = `<canvas class="pic" width="120" height="70"></canvas><div class="info"><div class="tag">${L.tag}</div><div class="nm">${L.name}</div><div class="ds">${L.desc}</div><div class="skulls">${'☠'.repeat(L.difficulty)}<span style="opacity:.25">${'☠'.repeat(3 - L.difficulty)}</span> сложность</div>${done.includes(L.id) ? '<div class="done">✔ пройден — кровавая луна пережита</div>' : ''}${+localStorage.getItem(SAVE + 'record:' + L.id) ? '<div class="done" style="color:#d9b44a">рекорд: ' + localStorage.getItem(SAVE + 'record:' + L.id) + ' дн.</div>' : ''}</div>`;
+    b.onclick = () => { selLevel = L; sfx.click(); renderLevels(); };
+    el.appendChild(b);
+    drawPreview(b.querySelector('canvas'), L, idx);
+  });
+  const det = $('m-level-detail');
+  det.classList.toggle('hidden', !selLevel);
+  if (selLevel) {
+    let save = null;
+    try { save = JSON.parse(localStorage.getItem(SAVE + 'world:' + selLevel.id) || 'null'); } catch (_) { save = null; }
+    $('m-continue').disabled = !save;
+    $('m-save-info').textContent = save
+      ? `Сохранённый мир: день ${save.d}, построено блоков: ${(save.blocks || []).length}. Код комнаты: ${save.code}.`
+      : 'Сохранений нет. «Новый мир» создаст остров с нуля.';
+  }
+}
+
+const previewCache = new Map();
+function drawPreview(cv, L, idx) {
+  const draw = () => {
+    let img = previewCache.get(L.id);
+    if (!img) {
+      const w = new World(L, L.seed, { layout: false });
+      const W = 120, H = 70;
+      const x = cv.getContext('2d');
+      img = x.createImageData(W, H);
+      const rgb = h => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
+      const cl = L.colors;
+      for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+        const wx = -C.HALF + (i + 0.5) / W * C.WORLD_SIZE, wz = -C.HALF * 0.58 + (j + 0.5) / H * C.WORLD_SIZE * 0.58;
+        const h = w.rawHeight(wx, wz);
+        const hl = w.rawHeight(wx - 25, wz);
+        let c = h < -6 ? rgb(0x1d4a6e) : h < 0 ? rgb(cl.water) : h < 1.4 ? rgb(cl.sand) : h > L.snowLine ? rgb(cl.snow) : Math.abs(h - hl) > 9 ? rgb(cl.rock) : rgb(cl.grass);
+        const k = h < 0 ? 1 : Math.max(0.7, Math.min(1.3, 1 + (h - hl) * 0.04));
+        const o = (j * W + i) * 4;
+        img.data[o] = c[0] * k; img.data[o + 1] = c[1] * k; img.data[o + 2] = c[2] * k; img.data[o + 3] = 255;
+      }
+      previewCache.set(L.id, img);
+    }
+    cv.getContext('2d').putImageData(img, 0, 0);
+  };
+  if (previewCache.has(L.id)) draw(); else setTimeout(draw, 30 + idx * 30);
+}
+
+$('m-new').onclick = () => {
+  if (!selLevel) return;
+  let save = null;
+  try { save = localStorage.getItem(SAVE + 'world:' + selLevel.id); } catch (_) { save = null; }
+  if (save && !confirm('Начать заново? Сохранённый мир «' + selLevel.name + '» будет удалён.')) return;
+  startHost(selLevel, false);
+};
+$('m-continue').onclick = () => { if (selLevel) startHost(selLevel, true); };
+$('m-join').onclick = () => joinGame($('m-code').value);
+$('m-code').addEventListener('keydown', e => { e.stopPropagation(); if (e.code === 'Enter') joinGame($('m-code').value); });
+$('m-code').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
+$('msg-ok').onclick = () => $('msgbox').classList.add('hidden');
+
+function message(title, text) {
+  $('msg-title').textContent = title;
+  $('msg-text').textContent = text;
+  $('msgbox').classList.remove('hidden');
+}
+
+function showMenu(msg) {
+  $('menu').classList.remove('hidden');
+  $('loading').classList.add('hidden');
+  renderLevels();
+  showPanel(selLevel ? 'levels' : 'levels');
+  if (msg) message('Игра завершена', msg);
+}
+
+function setLoading(p, text, title) {
+  $('loading').classList.remove('hidden');
+  if (title) $('load-title').textContent = title;
+  $('load-bar').style.width = Math.round(p * 100) + '%';
+  if (text) $('load-text').textContent = text;
+}
+// кадр ожидания при загрузке; в фоновой вкладке rAF не приходит — страхуемся таймером
+const frame = () => new Promise(r => {
+  let done = false;
+  const f = () => { if (!done) { done = true; r(); } };
+  requestAnimationFrame(f);
+  setTimeout(f, 60);
+});
+
+async function startHost(level, cont) {
+  sfx.init();
+  const online = $('m-online').checked;
+  const wkey = SAVE + 'world:' + level.id;
+  let save = null;
+  if (cont) { try { save = JSON.parse(localStorage.getItem(wkey) || 'null'); } catch (_) { save = null; } }
+  else {
+    localStorage.removeItem(wkey);
+    localStorage.removeItem(SAVE + 'player:' + level.id + ':host');
+  }
+  let code = (save && save.code) || randomCode();
+  setLoading(0.02, 'Подготовка…', level.name);
+  await frame();
+  let net = null, mode = 'solo';
+  if (online) {
+    setLoading(0.05, 'Открываем комнату для друзей…');
+    net = new Net();
+    try { await net.host(code); mode = 'host'; }
+    catch (e) {
+      net.close(); net = null;
+      if (e && e.type === 'unavailable-id') {
+        code = randomCode();
+        net = new Net();
+        try { await net.host(code); mode = 'host'; } catch (_) { net.close(); net = null; }
+      }
+      if (!net) message('Без сети', 'Не удалось открыть комнату (нет интернета или сервер сигнализации недоступен). Мир запущен в одиночном режиме.');
+    }
+  }
+  await bootGame({ level, seed: save ? save.seed : level.seed, mode, net, code, worldSave: save });
+}
+
+async function joinGame(raw) {
+  sfx.init();
+  const code = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const st = $('m-join-status');
+  if (code.length !== 5) { st.textContent = 'Код комнаты — 5 символов.'; return; }
+  st.textContent = 'Подключение…';
+  setLoading(0.05, 'Ищем комнату ' + code + '…', 'Подключение');
+  const net = new Net();
+  try {
+    const w = await net.join(code, { t: 'hello', name: prof.name, color: prof.color, ver: C.VERSION });
+    const level = C.levelById(w.level);
+    st.textContent = '';
+    await bootGame({ level, seed: w.seed, mode: 'client', net, code, welcome: w });
+  } catch (e) {
+    net.close();
+    $('loading').classList.add('hidden');
+    st.textContent = (e && e.message) || 'Не удалось подключиться';
+  }
+}
+
+async function bootGame(o) {
+  setLoading(0.1, 'Генерация острова 3000×3000 м: рельеф, города, дороги…', o.level.name);
+  await frame();
+  try {
+    game = new Game({
+      ...o, settings: prof.settings, renderer, input, ui, sfx, icons, name: prof.name, color: prof.color,
+      onQuit: msg => { game = null; showMenu(msg); },
+      onSettings: saveProfile,
+    });
+    await game.init((p, text) => setLoading(0.15 + p * 0.85, text));
+  } catch (e) {
+    console.error(e);
+    if (o.net) o.net.close();
+    game = null;
+    $('loading').classList.add('hidden');
+    message('Ошибка', 'Не удалось запустить мир: ' + (e && e.message));
+    return;
+  }
+  $('loading').classList.add('hidden');
+  $('menu').classList.add('hidden');
+  $('click-to-play').classList.remove('hidden');
+}
+
+// ---------- главный цикл ----------
+// Видимая вкладка — requestAnimationFrame. Свёрнутая — тикер в Web Worker (его браузер не замораживает),
+// чтобы хост продолжал симулировать зомби и слать снапшоты друзьям.
+let last = performance.now();
+function tick(render) {
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - last) / 1000);
+  if (dt <= 0.001) return;
+  last = now;
+  try {
+    if (game) game.frame(dt, render);
+    else if (render) menuFrame(dt);
+  } catch (e) { console.error(e); }
+  input.endFrame();
+}
+function loop() {
+  requestAnimationFrame(loop);
+  tick(true);
+}
+try {
+  const src = 'setInterval(function(){postMessage(0)}, 50);';
+  const ticker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+  ticker.onmessage = () => { if (performance.now() - last > 120) tick(!document.hidden); };
+} catch (e) { console.warn('ticker', e); }
+
+showMenu();
+selLevel = C.LEVELS[0];
+renderLevels();
+requestAnimationFrame(loop);
+setTimeout(() => { try { buildMenuScene(); } catch (e) { console.warn(e); } }, 50);
+
+// для отладки из консоли
+window.__mk = {
+  get game() { return game; }, C,
+  step(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { if (game) game.frame(dt); else menuFrame(dt); input.endFrame(); } },
+};

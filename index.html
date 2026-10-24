@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мёртвый край</title>
+<meta name="description" content="Кооперативный зомби-выживач в браузере: остров 3000×3000 м, до 10 игроков, лут, оружие, строительство баз.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Rubik:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- ======== ГЛАВНОЕ МЕНЮ ======== -->
+<div id="menu" class="screen">
+  <div class="menu-wrap">
+    <div class="logo">
+      <h1>МЁРТВЫЙ КРАЙ</h1>
+      <div class="sub">кооперативное выживание · до 10 игроков</div>
+    </div>
+    <div class="menu-cols">
+      <div class="menu-side">
+        <label class="field">Имя выжившего
+          <input id="m-name" maxlength="16" spellcheck="false">
+        </label>
+        <div class="field">Цвет куртки
+          <div id="m-colors" class="swatches"></div>
+        </div>
+        <button class="btn big" data-go="levels">Создать мир</button>
+        <button class="btn big" data-go="join">Подключиться к другу</button>
+        <button class="btn" data-go="settings">Настройки</button>
+        <button class="btn" data-go="help">Как играть</button>
+        <div class="ver" id="m-ver"></div>
+      </div>
+      <div class="menu-main">
+        <section id="p-levels" class="mpanel">
+          <h2>Выбери уровень</h2>
+          <div id="m-levels" class="levels"></div>
+          <div id="m-level-detail" class="level-detail hidden">
+            <label class="check"><input type="checkbox" id="m-online" checked> Открыть мир для друзей (онлайн, до 10 игроков)</label>
+            <div class="row">
+              <button class="btn primary" id="m-new">Новый мир</button>
+              <button class="btn" id="m-continue">Продолжить</button>
+            </div>
+            <div class="hint" id="m-save-info"></div>
+          </div>
+        </section>
+        <section id="p-join" class="mpanel hidden">
+          <h2>Подключиться к другу</h2>
+          <p>Попроси друга создать мир с галочкой «Открыть мир для друзей» и скинуть тебе код комнаты.</p>
+          <div class="row">
+            <input id="m-code" class="code-input" maxlength="5" placeholder="КОД" spellcheck="false" autocomplete="off">
+            <button class="btn primary" id="m-join">Войти</button>
+          </div>
+          <div class="hint" id="m-join-status"></div>
+        </section>
+        <section id="p-settings" class="mpanel hidden">
+          <h2>Настройки</h2>
+          <div id="m-settings" class="settings"></div>
+        </section>
+        <section id="p-help" class="mpanel hidden">
+          <h2>Как играть</h2>
+          <div class="help">
+            <div class="keys">
+              <div><b>W A S D</b> движение</div><div><b>Shift</b> бег</div><div><b>Пробел</b> прыжок</div>
+              <div><b>C</b> присесть</div><div><b>ЛКМ</b> удар / выстрел / использовать</div><div><b>ПКМ</b> прицел</div>
+              <div><b>R</b> перезарядка / поворот блока</div><div><b>E</b> обыскать / открыть</div><div><b>1–8, колесо</b> слоты</div>
+              <div><b>Tab / I</b> инвентарь и крафт</div><div><b>M</b> карта</div><div><b>F</b> фонарик</div>
+              <div><b>Q</b> выбросить предмет</div><div><b>Enter</b> чат</div><div><b>Esc</b> пауза</div>
+            </div>
+            <p><b>Выживание:</b> следи за едой и водой, обыскивай дома, магазины, полицию и военные ящики. Пить можно прямо из озёр [E]. Ночью зомби быстрее — бери фонарик [F].</p>
+            <p><b>Добыча:</b> бей деревья (древесина), камни (камень), рыжие залежи киркой (железная руда), кусты (волокно и ягоды). Топор и кирка добывают в разы быстрее.</p>
+            <p><b>База и крафт:</b> построй верстак, кузницу и костёр — у каждой станции свои рецепты. Стены, окна, двери, шипы, ящики, грядки с картофелем и сборщик воды. Зомби ломают стены, чини их молотком.</p>
+            <p><b>Кровавая луна:</b> каждую 7-ю ночь приходит орда — и вместе с ней босс. Переживи первую кровавую луну, чтобы пройти уровень.</p>
+            <p><b>Боссы:</b> Мясник (удар по площади, крушит стены), Крикунья (зовёт зомби) и Прыгун (прыгает на 20 м). Логова отмечены на карте, с боссов падают трофеи для лучшего оружия.</p>
+            <p><b>Уровни:</b> 3 карты по 3000×3000 м с растущей сложностью. Уровень персонажа растёт за убийства, добычу и задания и открывает рецепты.</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== ЗАГРУЗКА ======== -->
+<div id="loading" class="screen hidden">
+  <div class="load-box">
+    <div class="load-title" id="load-title">Генерация мира</div>
+    <div class="bar"><i id="load-bar"></i></div>
+    <div class="load-text" id="load-text"></div>
+  </div>
+</div>
+
+<!-- ======== HUD ======== -->
+<div id="hud" class="hidden">
+  <div id="crosshair"><i></i><i></i><i></i><i></i></div>
+  <div id="hitmarker"></div>
+  <div id="prompt"></div>
+  <div id="usebar"><i></i></div>
+  <div id="stats">
+    <div class="stat hp"><span>ЗДР</span><div class="sb"><i></i></div></div>
+    <div class="stat st"><span>ВЫН</span><div class="sb"><i></i></div></div>
+    <div class="stat fd"><span>ЕДА</span><div class="sb"><i></i></div></div>
+    <div class="stat wt"><span>ВОДА</span><div class="sb"><i></i></div></div>
+  </div>
+  <div id="hotbar"></div>
+  <div id="ammo"></div>
+  <canvas id="compass" width="420" height="34"></canvas>
+  <div id="clock"></div>
+  <div id="room"></div>
+  <div id="feed"></div>
+  <div id="toast"></div>
+  <div id="objective"></div>
+  <div id="bossbar"><b></b><div class="bb"><i></i></div></div>
+  <div id="xp"><div class="xpbar"><i></i></div><span id="xp-lvl"></span></div>
+  <div id="vignette"></div>
+  <div id="scope"></div>
+  <div id="chat"><div id="chat-log"></div><input id="chat-input" maxlength="120" placeholder="Сообщение… (Enter — отправить, Esc — отмена)"></div>
+  <div id="click-to-play" class="hidden">Нажми, чтобы играть</div>
+</div>
+
+<!-- ======== ИНВЕНТАРЬ ======== -->
+<div id="inv" class="screen dim hidden">
+  <div class="inv-wrap">
+    <div class="inv-col inv-char">
+      <h3>Выживший</h3>
+      <div id="inv-char"></div>
+    </div>
+    <div class="inv-col inv-main">
+      <h3>Рюкзак</h3>
+      <div id="inv-grid" class="grid"></div>
+      <div class="hint">Перетаскивай предметы мышью. Двойной клик — использовать. Перетащи за край окна — выбросить.</div>
+    </div>
+    <div class="inv-col inv-right">
+      <div id="cont-box" class="hidden">
+        <h3 id="cont-title">Контейнер</h3>
+        <div id="cont-grid" class="grid"></div>
+        <div class="row"><button class="btn small" id="cont-takeall">Забрать всё</button></div>
+      </div>
+      <div id="craft-box">
+        <h3>Крафт</h3>
+        <div id="craft-list"></div>
+      </div>
+    </div>
+  </div>
+  <div id="tooltip" class="hidden"></div>
+  <div id="drag-ghost" class="hidden"></div>
+</div>
+
+<!-- ======== КАРТА ======== -->
+<div id="map" class="screen dim hidden">
+  <canvas id="map-canvas"></canvas>
+  <div class="map-legend">M или Esc — закрыть · колесо — масштаб · тяни мышью — двигать</div>
+</div>
+
+<!-- ======== ПАУЗА ======== -->
+<div id="pause" class="screen dim hidden">
+  <div class="pause-box">
+    <h2>Пауза</h2>
+    <div id="pause-room"></div>
+    <div id="pause-players"></div>
+    <div class="col">
+      <button class="btn big primary" id="p-resume">Продолжить</button>
+      <button class="btn" id="p-settings-btn">Настройки</button>
+      <div id="pause-settings" class="settings hidden"></div>
+      <button class="btn" id="p-quit">Сохранить и выйти в меню</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======== СМЕРТЬ / ПОБЕДА ======== -->
+<div id="death" class="screen dim hidden">
+  <div class="pause-box">
+    <h2 class="red">ВЫ ПОГИБЛИ</h2>
+    <p id="death-text"></p>
+    <div class="col">
+      <button class="btn big primary" id="d-respawn">Возродиться</button>
+      <button class="btn" id="d-bed">У спальника</button>
+    </div>
+  </div>
+</div>
+<div id="victory" class="screen dim hidden">
+  <div class="pause-box">
+    <h2 class="gold">ЭВАКУАЦИЯ!</h2>
+    <p id="victory-text"></p>
+    <div class="col">
+      <button class="btn big primary" id="v-continue">Остаться в мире</button>
+      <button class="btn" id="v-menu">В главное меню</button>
+    </div>
+  </div>
+</div>
+
+<div id="msgbox" class="screen dim hidden">
+  <div class="pause-box">
+    <h2 id="msg-title"></h2>
+    <p id="msg-text"></p>
+    <div class="col"><button class="btn primary" id="msg-ok">OK</button></div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
