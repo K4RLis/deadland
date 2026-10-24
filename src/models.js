@@ -63,16 +63,24 @@ export function makeHumanoid(o) {
   const legL = new THREE.Group(), legR = new THREE.Group();
   legL.position.set(-0.13 * wide, 0.82, 0); legR.position.set(0.13 * wide, 0.82, 0);
   for (const l of [legL, legR]) {
-    limb(l, [[0.22 * wide, 0.82, 0.25, o.pants, 0, -0.41, 0], [0.23 * wide, 0.12, 0.32, o.shoes || 0x2a2420, 0, -0.76, -0.03]]);
+    limb(l, [[0.22 * wide, 0.82, 0.25, o.pants, 0, -0.41, 0], [0.23 * wide, 0.12, 0.32, o.shoes || 0x2a2420, 0, -0.76, -0.03],
+      [0.235 * wide, 0.035, 0.33, 0x1a1612, 0, -0.81, -0.03], [0.16 * wide, 0.12, 0.02, o.pants, 0, -0.42, -0.13],
+      [0.225 * wide, 0.05, 0.255, o.shoes || 0x2a2420, 0, -0.66, 0]]);
     body.add(l);
   }
-  const torso = [[0.54 * wide, 0.68, 0.3 * wide, o.shirt, 0, 1.16, 0]];
-  if (o.belt !== false) torso.push([0.55 * wide, 0.08, 0.31 * wide, 0x3a2a1e, 0, 0.84, 0]);
+  const torso = [[0.54 * wide, 0.68, 0.3 * wide, o.shirt, 0, 1.16, 0],
+    [0.3, 0.06, 0.32 * wide, o.sleeve ?? o.shirt, 0, 1.47, 0],
+    [0.13, 0.12, 0.02, o.sleeve ?? o.shirt, -0.13 * wide, 1.28, -0.155 * wide],
+    [0.13, 0.12, 0.02, o.sleeve ?? o.shirt, 0.13 * wide, 1.28, -0.155 * wide],
+    [0.04, 0.5, 0.02, 0x2a2a2a, 0, 1.18, -0.152 * wide]];
+  if (o.belt !== false) torso.push([0.55 * wide, 0.08, 0.31 * wide, 0x3a2a1e, 0, 0.84, 0], [0.07, 0.06, 0.02, 0xc8a040, 0, 0.84, -0.16 * wide]);
   limb(body, torso);
   const head = new THREE.Group();
   head.position.set(0, 1.5, 0);
   body.add(head);
-  const hb = [[0.34, 0.34, 0.34, o.skin, 0, 0.17, 0]];
+  const hb = [[0.34, 0.34, 0.34, o.skin, 0, 0.17, 0], [0.06, 0.07, 0.05, o.skin, 0, 0.14, -0.19],
+    [0.04, 0.08, 0.06, o.skin, -0.18, 0.17, 0.0], [0.04, 0.08, 0.06, o.skin, 0.18, 0.17, 0.0],
+    [0.3, 0.05, 0.04, o.skin, 0, 0.02, -0.15]];
   if (o.hair != null) hb.push([0.36, 0.1, 0.36, o.hair, 0, 0.36, 0], [0.36, 0.22, 0.08, o.hair, 0, 0.24, 0.15]);
   if (o.helmet != null) hb.push([0.4, 0.14, 0.4, o.helmet, 0, 0.37, 0], [0.42, 0.04, 0.42, o.helmet, 0, 0.3, 0]);
   if (o.zombie) hb.push([0.14, 0.04, 0.02, 0x3a1010, 0, 0.08, -0.172]);
@@ -83,7 +91,8 @@ export function makeHumanoid(o) {
   const armL = new THREE.Group(), armR = new THREE.Group();
   armL.position.set(-0.36 * wide, 1.44, 0); armR.position.set(0.36 * wide, 1.44, 0);
   for (const a of [armL, armR]) {
-    limb(a, [[0.17, 0.6, 0.18, o.sleeve ?? o.shirt, 0, -0.27, 0], [0.15, 0.14, 0.16, o.skin, 0, -0.62, 0]]);
+    limb(a, [[0.17, 0.6, 0.18, o.sleeve ?? o.shirt, 0, -0.27, 0], [0.15, 0.14, 0.16, o.skin, 0, -0.62, 0],
+      [0.18, 0.05, 0.19, 0x2a2a2a, 0, -0.53, 0], [0.05, 0.07, 0.06, o.skin, 0, -0.6, -0.09], [0.18, 0.1, 0.19, o.sleeve ?? o.shirt, 0, 0.0, 0]]);
     body.add(a);
   }
   const hand = new THREE.Group();

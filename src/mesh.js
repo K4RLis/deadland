@@ -57,21 +57,51 @@ export class MeshBuilder {
     this.quad(x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, side2);
   }
 
-  // треугольная призма (двускатная крыша) внутри ограничивающего бокса
+  // коробка, у которой стены разбиты на горизонтальные полосы (обшивка / кладка)
+  boxBanded(x0, y0, z0, x1, y1, z1, col, band, noBottom = true) {
+    const n = Math.max(1, Math.round((y1 - y0) / band));
+    const top = col;
+    this.quad(x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0, top);
+    if (!noBottom) this.quad(x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1, shade(col, 0.86));
+    for (let k = 0; k < n; k++) {
+      const a = y0 + (y1 - y0) * k / n, b = y0 + (y1 - y0) * (k + 1) / n;
+      const f = k & 1 ? 0.95 : 1;
+      const side = shade(col, 0.93 * f), side2 = shade(col, 0.86 * f);
+      this.quad(x1, a, z1, x1, a, z0, x1, b, z0, x1, b, z1, side);
+      this.quad(x0, a, z0, x0, a, z1, x0, b, z1, x0, b, z0, side);
+      this.quad(x0, a, z1, x1, a, z1, x1, b, z1, x0, b, z1, side2);
+      this.quad(x1, a, z0, x0, a, z0, x0, b, z0, x1, b, z0, side2);
+    }
+  }
+
+  // треугольная призма (двускатная крыша) с рядами черепицы
   prism(x0, y0, z0, x1, y1, z1, col, ridgeX) {
     const s = shade(col, 0.9);
+    const R = 5;
     if (ridgeX) {
       const zm = (z0 + z1) / 2;
-      this.quad(x0, y0, z1, x1, y0, z1, x1, y1, zm, x0, y1, zm, col);
-      this.quad(x1, y0, z0, x0, y0, z0, x0, y1, zm, x1, y1, zm, s);
+      for (let k = 0; k < R; k++) {
+        const t0 = k / R, t1 = (k + 1) / R, f = k & 1 ? 0.94 : 1;
+        const ya = y0 + (y1 - y0) * t0, yb = y0 + (y1 - y0) * t1;
+        const za = z1 + (zm - z1) * t0, zb = z1 + (zm - z1) * t1, wa = z0 + (zm - z0) * t0, wb = z0 + (zm - z0) * t1;
+        this.quad(x0, ya, za, x1, ya, za, x1, yb, zb, x0, yb, zb, shade(col, f));
+        this.quad(x1, ya, wa, x0, ya, wa, x0, yb, wb, x1, yb, wb, shade(s, f));
+      }
       this.tri(x1, y0, z1, x1, y0, z0, x1, y1, zm, s);
       this.tri(x0, y0, z0, x0, y0, z1, x0, y1, zm, s);
+      this.box(x0 - 0.05, y1 - 0.06, zm - 0.12, x1 + 0.05, y1 + 0.08, zm + 0.12, shade(col, 0.75), true);
     } else {
       const xm = (x0 + x1) / 2;
-      this.quad(x1, y0, z1, x1, y0, z0, xm, y1, z0, xm, y1, z1, col);
-      this.quad(x0, y0, z0, x0, y0, z1, xm, y1, z1, xm, y1, z0, s);
+      for (let k = 0; k < R; k++) {
+        const t0 = k / R, t1 = (k + 1) / R, f = k & 1 ? 0.94 : 1;
+        const ya = y0 + (y1 - y0) * t0, yb = y0 + (y1 - y0) * t1;
+        const xa = x1 + (xm - x1) * t0, xb = x1 + (xm - x1) * t1, va = x0 + (xm - x0) * t0, vb = x0 + (xm - x0) * t1;
+        this.quad(xa, ya, z1, xa, ya, z0, xb, yb, z0, xb, yb, z1, shade(col, f));
+        this.quad(va, ya, z0, va, ya, z1, vb, yb, z1, vb, yb, z0, shade(s, f));
+      }
       this.tri(x0, y0, z1, x1, y0, z1, xm, y1, z1, s);
       this.tri(x1, y0, z0, x0, y0, z0, xm, y1, z0, s);
+      this.box(xm - 0.12, y1 - 0.06, z0 - 0.05, xm + 0.12, y1 + 0.08, z1 + 0.05, shade(col, 0.75), true);
     }
   }
 
@@ -118,6 +148,36 @@ export class MeshBuilder {
     g.computeBoundingSphere();
     return g;
   }
+}
+
+// «Текстура» без картинок: мелкое зерно по мировым координатам, гаснет с расстоянием
+export function addSurfaceDetail(material, scale = 3, amp = 0.09) {
+  material.onBeforeCompile = shader => {
+    shader.uniforms.uDetail = { value: new THREE.Vector2(scale, amp) };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          vWPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+        #else
+          vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        #endif`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vWPos;
+        uniform vec2 uDetail;
+        float dHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec3 q = vWPos * uDetail.x + vec3(0.37, 0.11, 0.73);
+          float n1 = dHash(floor(q)) - 0.5;
+          float n2 = dHash(floor(q * 0.3) + 17.0) - 0.5;
+          float fade = 1.0 - smoothstep(20.0, 85.0, length(vViewPosition));
+          diffuseColor.rgb *= 1.0 + (n1 + n2 * 0.7) * uDetail.y * fade;
+        }`);
+  };
+  material.customProgramCacheKey = () => 'detail_' + scale + '_' + amp;
+  return material;
 }
 
 // Общие неиндексированные примитивы

@@ -110,6 +110,45 @@ export class Inventory {
     return true;
   }
 
+  // слот в диапазоне [from, to): сначала неполная стопка того же предмета, потом пустой
+  target(id, from, to) {
+    if (ITEMS[id].stack > 1) for (let i = from; i < to; i++) { const s = this.slots[i]; if (s && s.id === id && s.n < ITEMS[id].stack) return i; }
+    for (let i = from; i < to; i++) if (!this.slots[i]) return i;
+    return -1;
+  }
+
+  // разделить стопку пополам в первый пустой слот рюкзака (или хотбара)
+  split(i) {
+    const s = this.slots[i];
+    if (!s || s.n < 2) return false;
+    let t = -1;
+    for (let k = HOTBAR; k < INV_SIZE && t < 0; k++) if (!this.slots[k]) t = k;
+    for (let k = 0; k < HOTBAR && t < 0; k++) if (!this.slots[k]) t = k;
+    if (t < 0) return false;
+    const half = Math.floor(s.n / 2);
+    s.n -= half;
+    this.slots[t] = { ...s, n: half };
+    this.changed();
+    return true;
+  }
+
+  // сортировка рюкзака: склеить стопки и упорядочить по категориям
+  sort() {
+    const ORDER = ['gun', 'melee', 'ammo', 'med', 'food', 'block', 'mat'];
+    const items = [];
+    for (let i = HOTBAR; i < INV_SIZE; i++) if (this.slots[i]) { items.push(this.slots[i]); this.slots[i] = null; }
+    const merged = [];
+    for (const it of items) {
+      const st = ITEMS[it.id].stack;
+      let n = it.n;
+      if (st > 1) for (const m of merged) { if (n <= 0) break; if (m.id === it.id && m.n < st) { const k = Math.min(n, st - m.n); m.n += k; n -= k; } }
+      if (n > 0) merged.push({ ...it, n });
+    }
+    merged.sort((a, b) => ORDER.indexOf(ITEMS[a.id].cat) - ORDER.indexOf(ITEMS[b.id].cat) || ITEMS[a.id].name.localeCompare(ITEMS[b.id].name, 'ru') || b.n - a.n);
+    merged.forEach((it, k) => { this.slots[HOTBAR + k] = it; });
+    this.changed();
+  }
+
   serialize() { return this.slots.map(s => (s ? { ...s } : null)); }
   load(arr) {
     this.slots = new Array(INV_SIZE).fill(null);

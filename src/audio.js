@@ -1,5 +1,6 @@
 // Звуки на WebAudio: почти всё синтезируется на лету, отдельные выстрелы — записанные сэмплы.
-const SAMPLES = { asval: 'assets/sfx/asval.wav' };
+// Положи файл assets/sfx/<id>.wav (или .mp3/.ogg) — он заменит синтезированный выстрел.
+const GUN_SOUNDS = ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper'];
 
 export class Sfx {
   constructor() {
@@ -28,11 +29,16 @@ export class Sfx {
 
   loadSamples() {
     this.samples = {};
-    for (const [k, url] of Object.entries(SAMPLES)) {
-      fetch(url).then(r => r.arrayBuffer()).then(b => this.ctx.decodeAudioData(b))
-        .then(buf => { this.samples[k] = buf; })
-        .catch(e => console.warn('sample', k, e));
-    }
+    for (const k of GUN_SOUNDS) this.loadSample(k, ['wav', 'mp3', 'ogg']);
+  }
+
+  loadSample(k, exts) {
+    if (!exts.length) return;
+    fetch(`assets/sfx/${k}.${exts[0]}`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then(b => this.ctx.decodeAudioData(b))
+      .then(buf => { this.samples[k] = buf; })
+      .catch(() => this.loadSample(k, exts.slice(1)));
   }
 
   // записанный звук с позиционированием; false — сэмпла пока нет
@@ -113,7 +119,7 @@ export class Sfx {
 
   gun(kind, pos) {
     if (!this.ctx) return;
-    if (kind === 'asval' && this.sample('asval', pos, 14, 240, 0.9)) return;
+    if (this.sample(kind, pos, kind === 'asval' ? 14 : 25, kind === 'asval' ? 240 : 500, 0.9)) return;
     const o = this.out(pos, 25, 500);
     if (!o) return;
     const v = o.k;

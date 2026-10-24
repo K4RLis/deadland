@@ -105,8 +105,17 @@ export class Game {
     const wc = C.WATER_COLOR;
     this.water = new THREE.Mesh(new THREE.PlaneGeometry(4200, 4200, 1, 1), new THREE.MeshLambertMaterial({ color: wc, transparent: true, opacity: 0.82 }));
     this.water.rotation.x = -Math.PI / 2;
-    this.water.position.y = C.SEA;
+    this.water.position.y = C.SEA - 0.25;
     s.add(this.water);
+    // гранёные волны вокруг игрока (плоское затенение — каждый треугольник бликует отдельно)
+    const wg = new THREE.PlaneGeometry(640, 640, 64, 64);
+    wg.rotateX(-Math.PI / 2);
+    this.waveGeo = wg.toNonIndexed();
+    this.waveBase = Float32Array.from(this.waveGeo.attributes.position.array);
+    this.waves = new THREE.Mesh(this.waveGeo, new THREE.MeshPhongMaterial({ color: wc, transparent: true, opacity: 0.84, flatShading: true, shininess: 80, specular: 0x5a7a9a }));
+    this.waves.position.y = C.SEA;
+    this.waves.frustumCulled = false;
+    s.add(this.waves);
     const N = 1400, pos = new Float32Array(N * 3);
     for (let i = 0; i < N; i++) {
       const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2;
@@ -124,7 +133,7 @@ export class Game {
     this.skyCol = new THREE.Color();
     this._c1 = new THREE.Color(); this._c2 = new THREE.Color();
     // гранёный небесный купол: цвет каждого треугольника считается от высоты и направления на солнце
-    const dg = new THREE.IcosahedronGeometry(1000, 3).toNonIndexed();
+    const dg = new THREE.IcosahedronGeometry(1000, 4).toNonIndexed();
     dg.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(dg.attributes.position.count * 3), 3));
     this.dome = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
     this.dome.renderOrder = -10;
@@ -134,7 +143,7 @@ export class Game {
     const cb = new MeshBuilder(0.1);
     let sd = 991;
     const rnd = () => { sd = (Math.imul(sd, 1103515245) + 12345) | 0; return ((sd >>> 8) & 0xffff) / 0xffff; };
-    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 1).toNonIndexed());
+    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 2).toNonIndexed());
     for (let i = 0; i < 16; i++) {
       const cx = rnd() * 1200 - 600, cz = rnd() * 1200 - 600, cy = 190 + rnd() * 50;
       const n = 4 + Math.floor(rnd() * 5), size = 18 + rnd() * 22;
@@ -153,6 +162,17 @@ export class Game {
       this.clouds.push(m);
     }
     this._sd = new THREE.Vector3(); this._hz = new THREE.Color(); this._zn = new THREE.Color(); this._gl = new THREE.Color(); this._tc = new THREE.Color();
+  }
+
+  updateWaves(cp) {
+    const wx = Math.round(cp.x / 10) * 10, wz = Math.round(cp.z / 10) * 10;
+    this.waves.position.x = wx; this.waves.position.z = wz;
+    const t = this.time, base = this.waveBase, pa = this.waveGeo.attributes.position.array;
+    for (let i = 0; i < pa.length; i += 3) {
+      const x = base[i] + wx, z = base[i + 2] + wz;
+      pa[i + 1] = Math.sin(x * 0.21 + t * 1.6) * 0.13 + Math.sin(z * 0.17 + t * 1.25) * 0.11 + Math.sin((x + z) * 0.33 + t * 2.1) * 0.05;
+    }
+    this.waveGeo.attributes.position.needsUpdate = true;
   }
 
   // угол солнца: день (рассвет..закат) — половина круга, ночь — вторая половина
@@ -267,6 +287,7 @@ export class Game {
     this.moonDisc.material.color.setHex(this.hordeActive ? 0xd03020 : 0xdfe6f0);
     this.water.position.x = Math.round(cp.x / 40) * 40;
     this.water.position.z = Math.round(cp.z / 40) * 40;
+    this.updateWaves(cp);
     this.flash.intensity = this.flashOn && this.player.alive ? 70 : 0;
     this.weapons.hemi.intensity = 0.3 + 1.3 * day + (this.flashOn ? 0.5 : 0);
     this.weapons.sun.intensity = 0.2 + 1.85 * day;
@@ -295,7 +316,7 @@ export class Game {
     const ps = this.loadPlayer();
     if (!ps) {
       const s = this.findSpawn();
-      P.spawnAt(s.x, s.y, s.z, Math.random() * 6.28);
+      P.spawnAt(s.x, s.y, s.z, s.yaw);
       // стартовый набор — в рюкзак, чтобы в руках были кулаки
       for (const [id, n] of [['bandage', 2], ['water', 1], ['can', 1], ['b_torch', 2]]) this.inv.addItem(makeItem(id, n), false);
     }
@@ -317,20 +338,24 @@ export class Game {
     this.ui.toast(this.level.name + ' — день ' + this.day);
   }
 
+  // появление на пляже: сначала лесные берега (там безопаснее), потом пустынные; лицом к острову
   findSpawn() {
     const w = this.world;
+    const pool = w.spawns.filter(s => s.biome === 'forest');
+    const list = pool.length >= 4 ? pool : w.spawns.filter(s => s.biome !== 'snow').concat(pool);
+    const from = list.length ? list : w.spawns;
     for (let k = 0; k < 40; k++) {
-      const s = w.spawns[Math.floor(Math.random() * w.spawns.length)];
-      const x = s.x + (Math.random() - 0.5) * 16, z = s.z + (Math.random() - 0.5) * 16;
+      const s = from[Math.floor(Math.random() * from.length)];
+      const x = s.x + (Math.random() - 0.5) * 8, z = s.z + (Math.random() - 0.5) * 8;
       w.ensureAround(x, z, 1);
       const y = w.height(x, z);
-      if (y < 1) continue;
-      if (k < 30 && w.normalY(x, z) < 0.85) continue;
+      if (y < 0.4) continue;
+      if (k < 30 && w.normalY(x, z) < 0.8) continue;
       if (!this.physics.free(x, y, z, 0.6, 1.9)) continue;
-      return { x, y: y + 0.1, z };
+      return { x, y: y + 0.1, z, yaw: Math.atan2(x, z) };
     }
-    const s = w.spawns[0];
-    return { x: s.x, y: w.height(s.x, s.z) + 2, z: s.z };
+    const s = from[0];
+    return { x: s.x, y: Math.max(w.height(s.x, s.z), 0) + 2, z: s.z, yaw: Math.atan2(s.x, s.z) };
   }
 
   applySettings(k) {
@@ -1196,8 +1221,8 @@ export class Game {
 
   craft(r) {
     const P = this.player;
-    if (P.level < r.lvl || !this.inv.hasAll(r.cost)) return;
-    if (!this.stationOK(r.station)) { this.ui.toast('Нужно стоять рядом: ' + STATION_NAMES[r.station]); return; }
+    if (P.level < r.lvl || !this.inv.hasAll(r.cost)) return false;
+    if (!this.stationOK(r.station)) { this.ui.toast('Нужно стоять рядом: ' + STATION_NAMES[r.station]); return false; }
     for (const id in r.cost) this.inv.remove(id, r.cost[id]);
     const left = this.inv.add(r.out, r.n);
     if (left) this.dropItems([left]);
@@ -1205,6 +1230,14 @@ export class Game {
     this.addXP(3);
     if (TOOLS.has(r.out)) this.stat('tool');
     if (r.out === 'iron') this.stat('iron', r.n);
+    return true;
+  }
+
+  // сложить в контейнер всё из рюкзака (хотбар не трогаем)
+  putAll(cid) {
+    let n = 0;
+    for (let i = 8; i < this.inv.slots.length; i++) if (this.inv.slots[i]) { this.putToContainer(cid, i); n++; }
+    if (!n) this.ui.toast('Рюкзак пуст');
   }
 
   addXP(n) {
@@ -1320,7 +1353,7 @@ export class Game {
     const P = this.player;
     const b = atBed ? this.bedBlock() : null;
     if (b) P.spawnAt(b.i * 2 + 1, b.y0 + 0.4, b.j * 2 + 1, P.yaw);
-    else { const s = this.findSpawn(); P.spawnAt(s.x, s.y, s.z, Math.random() * 6.28); }
+    else { const s = this.findSpawn(); P.spawnAt(s.x, s.y, s.z, s.yaw); }
     P.hp = P.maxHp; P.food = Math.max(P.food, 70); P.water = Math.max(P.water, 70); P.stamina = P.perks.stamina;
     this.inv.add('bandage', 1); this.inv.add('water', 1);
     this.toHost({ t: 'respawn' });

@@ -42,6 +42,13 @@ export class UI {
     this.drag = null; this.lastClick = { i: -1, t: 0 };
     this.hudT = 0;
     this.mapView = { zoom: 1, cx: 0, cz: 0 };
+    this.picked = null; this.hover = null; this.craftTab = 'all';
+    this.lockAt = 0; this.relockPending = false;
+    // после закрытия панели по Esc захватываем мышь только когда клавишу отпустили:
+    // иначе браузер тут же снимает захват и открывается меню паузы
+    window.addEventListener('keyup', e => {
+      if (e.code === 'Escape' && this.relockPending) { this.relockPending = false; setTimeout(() => this.lock(), 60); }
+    });
     this.buildHotbar();
     this.buildInvGrid();
     document.addEventListener('pointerlockchange', () => this.onLockChange());
@@ -56,7 +63,11 @@ export class UI {
     window.addEventListener('pointermove', e => this.onDragMove(e));
     window.addEventListener('pointerup', e => this.onDragEnd(e));
     $('cont-takeall').onclick = () => { if (this.g && this.contCid) this.g.takeAll(this.contCid, this.contItems); };
-    $('inv').addEventListener('pointerdown', e => { if (e.target === $('inv')) this.closePanel(); });
+    $('inv').addEventListener('pointerdown', e => {
+      if (e.target !== $('inv')) return;
+      if (this.picked != null && this.g) { const i = this.picked; this.setPicked(null); this.g.dropFromInv(i); return; }
+      this.closePanel();
+    });
     this.bindMap();
   }
 
@@ -107,9 +118,12 @@ export class UI {
 
   onLockChange() {
     this.captured = document.pointerLockElement === this.canvas;
+    if (this.captured) this.lockAt = performance.now();
     $('click-to-play').classList.toggle('hidden', this.captured || !!this.panel || !this.g);
     if (!this.captured && this.g && !this.panel) {
       if (this.typing) this.closeChat();
+      // захват сорвался сразу после закрытия панели — это не просьба о паузе
+      if (performance.now() - this.lockAt < 700 || this.relockPending) { $('click-to-play').classList.remove('hidden'); return; }
       this.showPause();
     }
   }
@@ -123,22 +137,29 @@ export class UI {
     if (this.g) this.g.blocks.hideGhost();
   }
 
-  closePanel() {
+  closePanel(viaEsc = false) {
     if (this.panel === 'inv' && this.contCid && this.g) { this.g.closeContainer(this.contCid); }
     if (this.panel === 'death') return;
     this.contCid = null;
+    this.setPicked(null);
+    this.hover = null;
     $('cont-box').classList.add('hidden');
     $('tooltip').classList.add('hidden');
     this.hideAll();
-    this.lock();
-    $('click-to-play').classList.toggle('hidden', this.captured);
+    // Esc ещё зажат — ждём, пока отпустят; уже отпущен — захватываем чуть позже
+    if (viaEsc && this.g && this.g.input.keys.has('Escape')) this.relockPending = true;
+    else if (viaEsc) setTimeout(() => this.lock(), 150);
+    else this.lock();
+    $('click-to-play').classList.toggle('hidden', this.captured || viaEsc);
   }
 
   // клавиши, когда открыта панель или для открытия панелей
   handleKeys(pressed) {
     const g = this.g;
     if (!g || this.typing) return;
-    if (pressed.has('Escape') && this.panel && this.panel !== 'death' && this.panel !== 'pause') this.closePanel();
+    if (pressed.has('Escape') && this.panel && this.panel !== 'death' && this.panel !== 'pause') { this.closePanel(true); return; }
+    if (this.panel === 'inv') this.invKeys(pressed);
+    if (pressed.has('KeyE') && this.panel === 'inv' && !this.typingInField()) { this.closePanel(); return; }
     if (pressed.has('Tab') || pressed.has('KeyI')) {
       if (this.panel === 'inv') this.closePanel();
       else if (!this.panel && g.player.alive) this.openInv();
@@ -350,7 +371,7 @@ export class UI {
     gr.innerHTML = '';
     this.invSlots = [];
     for (let i = 0; i < INV_SIZE; i++) {
-      if (i === HOTBAR) { const gap = document.createElement('div'); gap.className = 'row-gap'; gr.appendChild(gap); }
+      if (i === HOTBAR) { const gap = document.createElement('div'); gap.className = 'row-gap'; gap.textContent = 'рюкзак'; gr.appendChild(gap); }
       const s = document.createElement('div');
       s.className = 'slot';
       s.dataset.src = 'inv'; s.dataset.i = i;
@@ -359,10 +380,24 @@ export class UI {
     }
     for (const el of [$('inv-grid'), $('cont-grid')]) {
       el.addEventListener('pointerdown', e => this.onDragStart(e));
-      el.addEventListener('pointerover', e => this.onHover(e));
-      el.addEventListener('pointerleave', () => $('tooltip').classList.add('hidden'));
+      el.addEventListener('pointermove', e => this.onHover(e));
+      el.addEventListener('pointerleave', () => { this.hover = null; $('tooltip').classList.add('hidden'); });
       el.addEventListener('contextmenu', e => { e.preventDefault(); this.onRightClick(e); });
     }
+    $('inv-sort').onclick = () => { if (this.g) { this.setPicked(null); this.g.inv.sort(); this.sfx.click(); } };
+    $('cont-putall').onclick = () => { if (this.g && this.contCid) { this.setPicked(null); this.g.putAll(this.contCid); } };
+    const search = $('craft-search');
+    search.addEventListener('input', () => this.renderCraft());
+    search.addEventListener('keydown', e => { e.stopPropagation(); if (e.code === 'Escape') search.blur(); });
+    $('craft-tabs').addEventListener('click', e => {
+      const b = e.target.closest('[data-tab]');
+      if (b) { this.craftTab = b.dataset.tab; this.sfx.click(); this.renderCraft(); }
+    });
+  }
+
+  typingInField() {
+    const a = document.activeElement;
+    return a && a.tagName === 'INPUT';
   }
 
   openInv() {
@@ -388,10 +423,12 @@ export class UI {
   renderInv() {
     const g = this.g;
     if (!g) return;
+    if (this.picked != null && !g.inv.slots[this.picked]) this.setPicked(null);
     for (let i = 0; i < INV_SIZE; i++) {
       const s = this.invSlots[i];
       s.innerHTML = this.slotHTML(g.inv.slots[i], i < HOTBAR ? i + 1 : '');
       s.classList.toggle('sel', i === g.player.sel);
+      s.classList.toggle('picked', i === this.picked);
     }
     this.renderCont();
     this.renderCraft();
@@ -409,25 +446,47 @@ export class UI {
 
   renderCraft() {
     const g = this.g, P = g.player;
-    const list = $('craft-list');
-    let h = '';
+    const TABS = [['all', 'Все'], ['can', 'Можно создать'], ['tools', 'Инструменты'], ['weap', 'Оружие'], ['build', 'Постройки'], ['food', 'Еда'], ['mat', 'Материалы']];
+    const tabOf = id => {
+      const c = ITEMS[id].cat;
+      return c === 'melee' ? 'tools' : c === 'gun' || c === 'ammo' ? 'weap' : c === 'block' ? 'build' : c === 'food' || c === 'med' ? 'food' : 'mat';
+    };
+    $('craft-tabs').innerHTML = TABS.map(([k, n]) => `<button class="btn small${this.craftTab === k ? ' on' : ''}" data-tab="${k}">${n}</button>`).join('');
+    const q = $('craft-search').value.trim().toLowerCase();
     const st = { bench: g.stationOK('bench'), forge: g.stationOK('forge'), fire: g.stationOK('fire') };
     const near = Object.keys(st).filter(k => st[k]).map(k => STATION_NAMES[k]);
-    h += `<div class="hint" style="margin:0 0 8px">${near.length ? 'Рядом: ' + near.join(', ') : 'Рядом нет станций — поставь верстак, кузницу или костёр.'}</div>`;
+    let h = `<div class="hint" style="margin:0 0 8px">${near.length ? 'Рядом: ' + near.join(', ') : 'Рядом нет станций — поставь верстак, кузницу или костёр.'} Shift+клик по «Создать» — сразу ×5.</div>`;
+    const rows = [];
     RECIPES.forEach((r, i) => {
       const def = ITEMS[r.out];
       const locked = P.level < r.lvl;
       const stOk = !r.station || st[r.station];
       const can = !locked && stOk && g.inv.hasAll(r.cost);
+      if (q && !def.name.toLowerCase().includes(q)) return;
+      if (this.craftTab === 'can' && !can) return;
+      if (this.craftTab !== 'all' && this.craftTab !== 'can' && tabOf(r.out) !== this.craftTab) return;
+      rows.push({ r, i, def, locked, stOk, can });
+    });
+    // сначала то, что можно сделать прямо сейчас, закрытые уровнем — в конце
+    rows.sort((a, b) => (b.can - a.can) || (a.locked - b.locked));
+    for (const { r, i, def, locked, stOk, can } of rows) {
       const cost = Object.entries(r.cost).map(([id, n]) => {
         const have = g.inv.count(id);
         return `<span class="${have < n ? 'miss' : ''}">${esc(ITEMS[id].name)} ${have}/${n}</span>`;
       }).join(' · ');
       const need = r.station ? `<span class="${stOk ? 'ok' : 'miss'}">⚒ ${STATION_NAMES[r.station]}</span> · ` : '';
-      h += `<div class="recipe ${locked ? 'locked' : ''}"><img src="${this.icons[r.out] || ''}"><div class="ri"><div class="rn">${esc(def.name)}${r.n > 1 ? ' ×' + r.n : ''}</div><div class="rc">${locked ? 'Нужен уровень ' + r.lvl : need + cost}</div></div><button class="btn small" data-r="${i}" ${can ? '' : 'disabled'}>Создать</button></div>`;
-    });
+      h += `<div class="recipe ${locked ? 'locked' : ''} ${can ? 'can' : ''}"><img src="${this.icons[r.out] || ''}"><div class="ri"><div class="rn">${esc(def.name)}${r.n > 1 ? ' ×' + r.n : ''}</div><div class="rc">${locked ? 'Нужен уровень ' + r.lvl : need + cost}</div></div><button class="btn small" data-r="${i}" ${can ? '' : 'disabled'} title="Shift+клик — создать 5 раз">Создать</button></div>`;
+    }
+    if (!rows.length) h += `<div class="hint">Ничего не найдено.</div>`;
+    const list = $('craft-list');
     list.innerHTML = h;
-    list.querySelectorAll('button[data-r]').forEach(b => { b.onclick = () => { g.craft(RECIPES[+b.dataset.r]); }; });
+    list.querySelectorAll('button[data-r]').forEach(b => {
+      b.onclick = e => {
+        const r = RECIPES[+b.dataset.r];
+        const times = e.shiftKey ? 5 : 1;
+        for (let k = 0; k < times; k++) if (!g.craft(r)) break;
+      };
+    });
   }
 
   renderChar() {
@@ -454,39 +513,45 @@ export class UI {
 
   itemAt(src, i) { return src === 'inv' ? this.g.inv.slots[i] : this.contItems[i]; }
 
+  // «взятый» предмет едет за курсором, следующий клик кладёт его
+  setPicked(i) {
+    this.picked = i;
+    if (this.invSlots) this.invSlots.forEach((s, k) => s.classList.toggle('picked', k === i));
+    const gh = $('drag-ghost');
+    const it = i != null && this.g ? this.g.inv.slots[i] : null;
+    if (it) { gh.innerHTML = `<img src="${this.icons[it.id] || ''}">`; gh.classList.remove('hidden'); }
+    else if (!this.drag || !this.drag.moved) gh.classList.add('hidden');
+  }
+
   onDragStart(e) {
     if (e.button !== 0) return;
     const s = e.target.closest('.slot');
     if (!s || !this.g) return;
     const src = s.dataset.src, i = +s.dataset.i;
     const it = this.itemAt(src, i);
-    if (!it) return;
-    this.drag = { src, i, x0: e.clientX, y0: e.clientY, moved: false, shift: e.shiftKey };
-    const gh = $('drag-ghost');
-    gh.innerHTML = `<img src="${this.icons[it.id] || ''}">`;
+    this.drag = { src, i, x0: e.clientX, y0: e.clientY, moved: false, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, has: !!it };
+    if (it && this.picked == null) $('drag-ghost').innerHTML = `<img src="${this.icons[it.id] || ''}">`;
     e.preventDefault();
   }
 
   onDragMove(e) {
     const d = this.drag;
-    const tip = $('tooltip');
+    const tip = $('tooltip'), gh = $('drag-ghost');
     if (!tip.classList.contains('hidden')) { tip.style.left = (e.clientX + 16) + 'px'; tip.style.top = (e.clientY + 16) + 'px'; }
-    if (!d) return;
-    if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 5) { d.moved = true; $('drag-ghost').classList.remove('hidden'); tip.classList.add('hidden'); }
-    if (d.moved) {
-      const gh = $('drag-ghost');
-      gh.style.left = (e.clientX - 28) + 'px'; gh.style.top = (e.clientY - 28) + 'px';
-    }
+    if (this.picked != null) { gh.style.left = (e.clientX - 28) + 'px'; gh.style.top = (e.clientY - 28) + 'px'; }
+    if (!d || !d.has || this.picked != null) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 6) { d.moved = true; gh.classList.remove('hidden'); tip.classList.add('hidden'); }
+    if (d.moved) { gh.style.left = (e.clientX - 28) + 'px'; gh.style.top = (e.clientY - 28) + 'px'; }
   }
 
   onDragEnd(e) {
     const d = this.drag;
     if (!d) return;
     this.drag = null;
-    $('drag-ghost').classList.add('hidden');
     const g = this.g;
     if (!g) return;
-    if (!d.moved) { this.onSlotClick(d.src, d.i, d.shift); return; }
+    if (!d.moved) { this.onSlotClick(d.src, d.i, d.shift, d.ctrl); return; }
+    $('drag-ghost').classList.add('hidden');
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const s = el && el.closest('.slot');
     const inCont = el && el.closest('#cont-box');
@@ -500,20 +565,56 @@ export class UI {
     }
   }
 
-  onSlotClick(src, i, shift) {
-    const g = this.g;
+  onSlotClick(src, i, shift, ctrl) {
+    const g = this.g, inv = g.inv;
+    if (src === 'cont') {
+      if (this.picked != null) { g.putToContainer(this.contCid, this.picked); this.setPicked(null); return; }
+      if (this.contItems[i]) g.takeFromContainer(this.contCid, i, this.contItems[i]);
+      return;
+    }
+    const it = inv.slots[i];
     const now = performance.now();
-    if (src === 'cont') { g.takeFromContainer(this.contCid, i, this.contItems[i]); return; }
-    if (shift && this.contCid) { g.putToContainer(this.contCid, i); return; }
-    if (this.lastClick.i === i && now - this.lastClick.t < 380) { this.lastClick.i = -1; g.quickUse(i); return; }
+    const dbl = this.lastClick.i === i && now - this.lastClick.t < 330;
     this.lastClick = { i, t: now };
+    if (dbl && it && !shift && !ctrl) { this.lastClick.i = -1; this.setPicked(null); g.quickUse(i); return; }
+    if (this.picked != null) {
+      if (this.picked !== i) { inv.move(this.picked, i); this.sfx.click(); }
+      this.setPicked(null);
+      return;
+    }
+    if (!it) return;
+    if (shift) { this.quickTransfer(i); return; }
+    if (ctrl) { if (inv.split(i)) this.sfx.click(); return; }
+    this.setPicked(i);
+  }
+
+  // Shift+клик: в контейнер, а без контейнера — между хотбаром и рюкзаком
+  quickTransfer(i) {
+    const g = this.g, inv = g.inv;
+    if (this.contCid) { g.putToContainer(this.contCid, i); return; }
+    const t = i < HOTBAR ? inv.target(inv.slots[i].id, HOTBAR, INV_SIZE) : inv.target(inv.slots[i].id, 0, HOTBAR);
+    if (t < 0) { this.toast(i < HOTBAR ? 'Рюкзак полон' : 'Хотбар полон'); return; }
+    inv.move(i, t);
+    this.sfx.click();
+  }
+
+  // наведи на предмет: 1–8 — в слот хотбара, Q — выбросить
+  invKeys(pressed) {
+    const g = this.g, h = this.hover;
+    if (!h || this.typingInField()) return;
+    for (let k = 0; k < HOTBAR; k++) {
+      if (!pressed.has('Digit' + (k + 1))) continue;
+      if (h.src === 'inv') { if (g.inv.slots[h.i] && h.i !== k) { g.inv.move(h.i, k); this.sfx.click(); } }
+      else if (this.contItems[h.i]) g.takeFromContainer(this.contCid, h.i, this.contItems[h.i]);
+    }
+    if (pressed.has('KeyQ') && h.src === 'inv' && g.inv.slots[h.i]) { if (this.picked === h.i) this.setPicked(null); g.dropFromInv(h.i); }
   }
 
   onRightClick(e) {
     const s = e.target.closest('.slot');
     if (!s || !this.g) return;
     const src = s.dataset.src, i = +s.dataset.i;
-    if (src === 'cont') this.g.takeFromContainer(this.contCid, i, this.contItems[i]);
+    if (src === 'cont') { if (this.contItems[i]) this.g.takeFromContainer(this.contCid, i, this.contItems[i]); }
     else if (this.contCid) this.g.putToContainer(this.contCid, i);
     else this.g.quickUse(i);
   }
@@ -521,19 +622,28 @@ export class UI {
   onHover(e) {
     const s = e.target.closest('.slot');
     const tip = $('tooltip');
-    if (!s || this.drag || !this.g) { tip.classList.add('hidden'); return; }
+    this.hover = s ? { src: s.dataset.src, i: +s.dataset.i } : null;
+    if (!s || (this.drag && this.drag.moved) || !this.g || this.picked != null) { tip.classList.add('hidden'); return; }
     const it = this.itemAt(s.dataset.src, +s.dataset.i);
     if (!it) { tip.classList.add('hidden'); return; }
+    if (!tip.classList.contains('hidden') && tip.dataset.key === s.dataset.src + s.dataset.i + it.id + it.n) {
+      tip.style.left = (e.clientX + 16) + 'px'; tip.style.top = (e.clientY + 16) + 'px';
+      return;
+    }
     const def = ITEMS[it.id];
-    let h = `<b>${esc(def.name)}</b><div class="c">${CAT_NAMES[def.cat] || ''}</div>`;
+    let h = `<b>${esc(def.name)}${it.n > 1 ? ' ×' + it.n : ''}</b><div class="c">${CAT_NAMES[def.cat] || ''}</div>`;
     if (def.cat === 'gun') h += `Урон ${def.dmg}${def.pellets ? '×' + def.pellets : ''} · магазин ${def.mag}<br>Патроны: ${esc(ITEMS[def.ammo].name)}<br>В магазине: ${it.ammo}`;
     else if (def.cat === 'melee') h += `Урон ${def.dmg}`;
-    else if (def.cat === 'food') h += [def.food ? `Сытость ${def.food > 0 ? '+' : ''}${def.food}` : '', def.water ? `Вода ${def.water > 0 ? '+' : ''}${def.water}` : ''].filter(Boolean).join(' · ');
+    else if (def.cat === 'food') h += [def.food ? `Сытость ${def.food > 0 ? '+' : ''}${def.food}` : '', def.water ? `Вода ${def.water > 0 ? '+' : ''}${def.water}` : '', def.heal ? `Здоровье +${def.heal}` : ''].filter(Boolean).join(' · ');
     else if (def.cat === 'med') h += `Лечит ${def.heal}`;
     else if (def.cat === 'block') h += `Прочность ${BLOCK_TYPES[def.block].hp}. Возьми в руки, ЛКМ — поставить, R — повернуть.`;
     if (def.desc) h += `<br>${esc(def.desc)}`;
-    if (def.cat === 'food' || def.cat === 'med') h += `<br><span class="c">двойной клик — использовать</span>`;
+    const keys = s.dataset.src === 'cont'
+      ? 'клик или 1–8 — забрать'
+      : (def.cat === 'food' || def.cat === 'med' ? 'ПКМ или двойной клик — использовать · ' : '') + '1–8 — в хотбар · Q — выбросить · Shift+клик — переложить' + (it.n > 1 ? ' · Ctrl+клик — разделить' : '');
+    h += `<div class="keys">${keys}</div>`;
     tip.innerHTML = h;
+    tip.dataset.key = s.dataset.src + s.dataset.i + it.id + it.n;
     tip.classList.remove('hidden');
     tip.style.left = (e.clientX + 16) + 'px'; tip.style.top = (e.clientY + 16) + 'px';
   }

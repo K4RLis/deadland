@@ -133,7 +133,7 @@ export class World {
     if (info.h < 1.2) return 0;
     const k = (1 - info.road) * (1 - Math.max(info.town, info.dirt));
     if (k <= 0) return 0;
-    return (((hash2(this.seed ^ 0x51ed, ix, iz) & 1023) / 1023) - 0.5) * 1.1 * k;
+    return (((hash2(this.seed ^ 0x51ed, ix, iz) & 1023) / 1023) - 0.5) * 0.95 * k;
   }
 
   vh(ix, iz) {
@@ -329,20 +329,25 @@ export class World {
       this.addStruct('car', x, z, this.facingRot(s.dx, s.dz) + (rng() < 0.5 ? 2 : 0), (s.ha + s.hb) / 2);
     }
 
-    // точки появления — окраины городов
-    for (const t of this.towns) {
-      for (let i = 0; i < 3; i++) {
-        for (let k = 0; k < 20; k++) {
-          const a = rng() * Math.PI * 2, d = t.r + 25 + rng() * 50;
-          const x = t.x + Math.cos(a) * d, z = t.z + Math.sin(a) * d;
-          if (Math.abs(x) > C.HALF - 60 || Math.abs(z) > C.HALF - 60) continue;
-          if (this.rawHeight(x, z) < 2) continue;
-          this.spawns.push({ x, z });
-          break;
-        }
+    // точки появления — пляжи по берегу острова: идём от центра наружу до последнего берега
+    for (let k = 0; k < 180; k++) {
+      const a = k / 180 * Math.PI * 2 + rng() * 0.02;
+      const dx = Math.cos(a), dz = Math.sin(a);
+      let coast = -1;
+      for (let r = C.HALF * 0.45; r < C.HALF * 1.05; r += 5) {
+        const h = this.rawHeight(dx * r, dz * r), h2 = this.rawHeight(dx * (r + 5), dz * (r + 5));
+        if (h > 0.4 && h2 <= 0.2) coast = r;
       }
+      if (coast < 0) continue;
+      const r = coast - 7 - rng() * 6;
+      const x = dx * r, z = dz * r;
+      const h = this.rawHeight(x, z);
+      if (h < 0.5 || h > 3.2) continue;
+      if (Math.abs(this.rawHeight(x - dx * 6, z - dz * 6) - h) > 3) continue;
+      if (this.nearFlat(x, z, 8) || this.roadWeight(x, z) > 0) continue;
+      this.spawns.push({ x, z, biome: this.biomeAt(x, z) });
     }
-    if (!this.spawns.length) this.spawns.push({ x: 0, z: 0 });
+    if (!this.spawns.length) this.spawns.push({ x: 0, z: 0, biome: 'forest' });
   }
 
   nearFlat(x, z, pad) {

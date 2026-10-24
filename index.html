@@ -147,16 +147,28 @@
     <div class="inv-col inv-main">
       <h3>Рюкзак</h3>
       <div id="inv-grid" class="grid"></div>
-      <div class="hint">Перетаскивай предметы мышью. Двойной клик — использовать. Перетащи за край окна — выбросить.</div>
+      <div class="row"><button class="btn small" id="inv-sort">Сортировать рюкзак</button></div>
+      <div class="inv-help">
+        <div><b>ЛКМ</b> взять и положить (или перетащить)</div>
+        <div><b>Shift+ЛКМ</b> быстро переложить</div>
+        <div><b>ПКМ / двойной клик</b> использовать</div>
+        <div><b>Ctrl+ЛКМ</b> разделить стопку</div>
+        <div><b>Наведи + 1–8</b> в слот хотбара</div>
+        <div><b>Наведи + Q</b> выбросить</div>
+        <div><b>Клик мимо окна</b> с предметом — выбросить</div>
+        <div><b>Esc / Tab / E</b> закрыть</div>
+      </div>
     </div>
     <div class="inv-col inv-right">
       <div id="cont-box" class="hidden">
         <h3 id="cont-title">Контейнер</h3>
         <div id="cont-grid" class="grid"></div>
-        <div class="row"><button class="btn small" id="cont-takeall">Забрать всё</button></div>
+        <div class="row"><button class="btn small" id="cont-takeall">Забрать всё</button><button class="btn small" id="cont-putall">Сложить всё из рюкзака</button></div>
       </div>
       <div id="craft-box">
         <h3>Крафт</h3>
+        <div id="craft-tabs" class="tabs"></div>
+        <input id="craft-search" placeholder="Поиск рецепта…" autocomplete="off" spellcheck="false">
         <div id="craft-list"></div>
       </div>
     </div>

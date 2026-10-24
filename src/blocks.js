@@ -1,6 +1,6 @@
 // Строительство баз: блоки 2×2×2 м на горизонтальной сетке, по высоте — привязка к земле и соседям.
 import * as THREE from 'three';
-import { MeshBuilder, lin, shade, PRIM, mat } from './mesh.js';
+import { MeshBuilder, lin, shade, PRIM, mat, addSurfaceDetail } from './mesh.js';
 import { ITEMS } from './items.js';
 
 // station — блок работает как станция крафта
@@ -189,7 +189,7 @@ export class Blocks {
     this.byKey = new Map();
     this.cols = new Map();
     this.meshes = {};
-    this.mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.mat = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true }), 5, 0.1);
     this.flameMat = new THREE.MeshBasicMaterial({ vertexColors: true });
     this.dirty = new Set();
     this.geoms = {};
