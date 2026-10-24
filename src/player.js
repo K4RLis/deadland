@@ -11,7 +11,7 @@ export class Player {
     this.radius = 0.36; this.height = 1.8; this.step = 0.55; this.grounded = false;
     this.yaw = 0; this.pitch = 0;
     this.hp = 100; this.stamina = 100; this.food = 100; this.water = 100;
-    this.alive = true; this.crouch = false; this.sprint = false; this.swim = false;
+    this.alive = true; this.crouch = false; this.sprint = false; this.swim = false; this.tired = false;
     this.sel = 0; this.xp = 0; this.level = 1;
     this.bobT = 0; this.stepDist = 0;
     this.bed = null;
@@ -39,7 +39,10 @@ export class Player {
     }
     this.crouch = ctl && (k.has('KeyC') || k.has('ControlLeft'));
     const moving = f !== 0 || s !== 0;
-    this.sprint = ctl && moving && f > 0 && k.has('ShiftLeft') && this.stamina > 1 && !this.crouch && g.weapons.ads < 0.3;
+    // выдохся — снова бежать можно, когда выносливость восстановится до 25 (иначе бег включался бы через кадр)
+    if (this.stamina <= 1) this.tired = true;
+    else if (this.stamina >= 25) this.tired = false;
+    this.sprint = ctl && moving && f > 0 && k.has('ShiftLeft') && !this.tired && !this.crouch && g.weapons.ads < 0.3;
     let speed = this.crouch ? 2.0 : this.sprint ? 7.0 : 4.3;
     if (this.swim) speed *= 0.55;
     if (g.weapons.useT > 0) speed *= 0.5;

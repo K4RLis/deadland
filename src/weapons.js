@@ -39,6 +39,7 @@ export class Weapons {
     this.lastAmmoUi = -1;
     this.fists = null;
     this.punchSide = 1;
+    this.runK = 0;
   }
 
   equip(id) {
@@ -358,7 +359,7 @@ export class Weapons {
     const p = this.swingT > 0 ? 1 - this.swingT : 1;
     let ext = 0;
     if (this.swingT > 0) ext = p < 0.22 ? easeOut(p / 0.22) : 1 - easeInOut((p - 0.22) / 0.78);
-    const run = P.sprint ? 1 : 0;
+    const run = this.runK;
     for (const f of this.fists) {
       const s = f.side;
       const active = s === this.punchSide;
@@ -383,7 +384,9 @@ export class Weapons {
     const g = this.g, P = g.player;
     const hs = Math.hypot(P.vel.x, P.vel.z);
     const moving = hs > 0.5 && P.grounded;
-    if (moving) this.bobT += dt * (P.sprint ? 11 : 7);
+    // поза бега включается плавно, без скачков
+    this.runK += ((P.sprint ? 1 : 0) - this.runK) * (1 - Math.exp(-dt * 10));
+    if (moving) this.bobT += dt * (7 + 4 * this.runK);
     const cat = def ? def.cat : 'fist';
     const ads = this.ads;
     let px = 0.22, py = -0.22, pz = -0.42, rx = 0, ry = 0, rz = 0;
@@ -398,7 +401,7 @@ export class Weapons {
     const bob = 1 - ads * 0.9;
     px += Math.sin(this.bobT) * 0.012 * bob;
     py += Math.abs(Math.cos(this.bobT)) * 0.012 * bob;
-    if (P.sprint && cat === 'gun') { rx -= 0.35; ry += 0.6; px -= 0.05; py -= 0.04; }
+    if (cat === 'gun') { const r = this.runK; rx -= 0.35 * r; ry += 0.6 * r; px -= 0.05 * r; py -= 0.04 * r; }
     // отдача
     this.recoil *= Math.exp(-dt * 14);
     pz += this.recoil * 0.06; rx += this.recoil * 0.12;
