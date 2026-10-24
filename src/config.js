@@ -67,12 +67,13 @@ export const DIFFICULTIES = [
   { id: 'hard', name: 'Тяжёлая', level: 3, desc: 'Больше зомби, они злее и быстрее. Лута меньше.', zombie: { count: 1.35, hp: 1.3, dmg: 1.35, speed: 1.08 }, loot: 0.85 },
 ];
 
-// описание мира для генератора и игры
-export function makeLevel(diffId = 'normal') {
+// описание мира для генератора и игры; test — тестовый мир: тот же остров, отдельное сохранение,
+// бесконечные патроны и все стволы со старта
+export function makeLevel(diffId = 'normal', test = false) {
   const d = DIFFICULTIES.find(x => x.id === diffId) || DIFFICULTIES[1];
   return {
-    id: WORLD_ID, name: 'Остров', seed: WORLD_SEED, diff: d, difficulty: d.level,
-    towns: 15, cabins: 40,
+    id: test ? 'test' : WORLD_ID, name: test ? 'Тестовый мир' : 'Остров', seed: WORLD_SEED, diff: d, difficulty: d.level,
+    towns: 15, cabins: 40, test, infAmmo: test,
   };
 }
 

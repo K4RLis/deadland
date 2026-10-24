@@ -278,7 +278,9 @@ export class UI {
       const it = g.inv.slots[P.sel];
       const def = it ? ITEMS[it.id] : null;
       const am = $('ammo');
-      if (def && def.cat === 'gun') am.innerHTML = `<div class="a">${it.ammo} <small>/ ${g.inv.count(def.ammo)}</small></div><div class="w">${esc(def.name)}</div>`;
+      if (def && def.cat === 'gun') am.innerHTML = g.level.infAmmo
+        ? `<div class="a">∞</div><div class="w">${esc(def.name)}</div>`
+        : `<div class="a">${it.ammo} <small>/ ${g.inv.count(def.ammo)}</small></div><div class="w">${esc(def.name)}</div>`;
       else if (def) am.innerHTML = `<div class="w">${esc(def.name)}${it.n > 1 ? ' ×' + it.n : ''}</div>`;
       else am.innerHTML = `<div class="w">Кулаки</div>`;
     }

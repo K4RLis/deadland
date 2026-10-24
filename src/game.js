@@ -319,6 +319,12 @@ export class Game {
       P.spawnAt(s.x, s.y, s.z, s.yaw);
       // стартовый набор — в рюкзак, чтобы в руках были кулаки
       for (const [id, n] of [['bandage', 2], ['water', 1], ['can', 1], ['b_torch', 2]]) this.inv.addItem(makeItem(id, n), false);
+      // тестовый мир: все стволы и железные инструменты сразу на панели
+      if (this.level.test) for (const id of ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'iaxe', 'ipick']) {
+        const it = makeItem(id, 1);
+        if (ITEMS[id].cat === 'gun') it.ammo = ITEMS[id].mag;
+        this.inv.addItem(it, true);
+      }
     }
     this.lastDay = this.day;
     this.world.ensureAround(P.pos.x, P.pos.z, 1);
@@ -516,7 +522,7 @@ export class Game {
     const drops = [];
     for (const d of this.drops.values()) drops.push([d.id, d.x, d.y, d.z]);
     this.net.send(pid, {
-      t: 'welcome', id: pid, level: this.level.id, diff: this.level.diff.id, seed: this.seed, code: this.code,
+      t: 'welcome', id: pid, level: this.level.id, diff: this.level.diff.id, test: !!this.level.test, seed: this.seed, code: this.code,
       tm: this.dayTime, d: this.day, h: this.hordeActive ? 1 : 0,
       roster: [...this.roster].map(([p, r]) => [p, r.name, r.color]), drops, ver: C.VERSION,
     });

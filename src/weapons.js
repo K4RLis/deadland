@@ -142,6 +142,7 @@ export class Weapons {
     // молоток: ПКМ — разобрать
     if (ctl && def && def.repair && inp.rmbPressed) this.dismantle();
 
+    if (g.level.infAmmo && def && def.cat === 'gun' && slot) slot.ammo = def.mag;
     this.animate(dt, def, slot);
     if (def && def.cat === 'gun' && slot) {
       const key = slot.ammo * 1000 + inv.count(def.ammo);
@@ -177,6 +178,7 @@ export class Weapons {
 
   fire(def, slot) {
     const g = this.g, P = g.player;
+    if (g.level.infAmmo) slot.ammo = def.mag;
     if (this.reloadT > 0) return;
     if (slot.ammo <= 0) {
       g.sfx.dry(null);
@@ -185,7 +187,7 @@ export class Weapons {
       else g.ui.toast('Нет патронов');
       return;
     }
-    slot.ammo--;
+    if (!g.level.infAmmo) slot.ammo--;
     this.cool = def.rate;
     this.camVectors();
     const hs = Math.hypot(P.vel.x, P.vel.z);

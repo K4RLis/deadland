@@ -186,6 +186,12 @@ $('m-new').onclick = () => {
   startHost(C.makeLevel(selDiff), false);
 };
 $('m-continue').onclick = () => { const sv = loadWorldSave(); if (sv) startHost(C.makeLevel(sv.diff || 'normal'), true); };
+// тестовый мир хранится отдельно и продолжается, если уже был создан
+$('m-test').onclick = () => {
+  let sv = null;
+  try { sv = JSON.parse(localStorage.getItem(SAVE + 'world:test') || 'null'); } catch (_) { sv = null; }
+  startHost(C.makeLevel(sv ? sv.diff || 'normal' : selDiff, true), !!sv);
+};
 $('m-join').onclick = () => joinGame($('m-code').value);
 $('m-code').addEventListener('keydown', e => { e.stopPropagation(); if (e.code === 'Enter') joinGame($('m-code').value); });
 $('m-code').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
@@ -260,7 +266,7 @@ async function joinGame(raw) {
   const net = new Net();
   try {
     const w = await net.join(code, { t: 'hello', name: prof.name, color: prof.color, ver: C.VERSION });
-    const level = C.makeLevel(w.diff || 'normal');
+    const level = C.makeLevel(w.diff || 'normal', !!w.test);
     st.textContent = '';
     await bootGame({ level, seed: w.seed, mode: 'client', net, code, welcome: w });
   } catch (e) {
