@@ -17,14 +17,14 @@ export function M(hex, emissive = 0) {
 }
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
-const CYL = new THREE.CylinderGeometry(1, 1, 1, 32);
-const CYL12 = new THREE.CylinderGeometry(1, 1, 1, 40);
-const FRUST = new THREE.CylinderGeometry(0.7, 1, 1, 32);
-const ICO = new THREE.IcosahedronGeometry(1, 3);
-const ICO1 = new THREE.IcosahedronGeometry(1, 4);
+const CYL = new THREE.CylinderGeometry(1, 1, 1, 48);
+const CYL12 = new THREE.CylinderGeometry(1, 1, 1, 64);
+const FRUST = new THREE.CylinderGeometry(0.7, 1, 1, 48);
+const ICO = new THREE.IcosahedronGeometry(1, 4);
+const ICO1 = new THREE.IcosahedronGeometry(1, 5);
 const DODE = new THREE.DodecahedronGeometry(1, 3);
-const CONE = new THREE.ConeGeometry(1, 1, 20);
-const CONE8 = new THREE.ConeGeometry(1, 1, 24);
+const CONE = new THREE.ConeGeometry(1, 1, 32);
+const CONE8 = new THREE.ConeGeometry(1, 1, 32);
 const PI2 = Math.PI / 2;
 
 export function part(parent, w, h, d, hex, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, geo = BOX, em = 0) {
@@ -58,6 +58,7 @@ export function rpart(parent, w, h, d, hex, x = 0, y = 0, z = 0, o = {}) {
     mb.rbox(0, 0, 0, w, h, d, [1, 1, 1], o);
     geo = mb.build();
     geo.userData.shared = true;
+    if ((o.c ?? 0.25) > 0) SMOOTH.add(geo);
     rboxGeo.set(key, geo);
   }
   const m = new THREE.Mesh(geo, M(hex));
@@ -146,6 +147,8 @@ const VC_MAT = new THREE.MeshLambertMaterial({ vertexColors: true });
 // предметы в руках — с лёгким бликом, металл и лак не выглядят матовой пластмассой
 const VC_ITEM = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 42, specular: 0x2e2e2e });
 const VC_GLOW = new THREE.MeshBasicMaterial({ vertexColors: true });
+// кожа рук от первого лица: мягкий, едва заметный блик
+const VC_SKIN = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 16, specular: 0x1e1915 });
 const flatCache = new WeakMap();
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3();
 const _na = new THREE.Vector3(), _nb = new THREE.Vector3(), _nc = new THREE.Vector3(), _nm = new THREE.Matrix3();
@@ -202,7 +205,7 @@ function bakeParts(g, facet = 0.06, shiny = false) {
 
 function fromBaked({ geo, glow, shiny }) {
   const out = new THREE.Group();
-  if (geo) { const m = new THREE.Mesh(geo, shiny ? VC_ITEM : VC_MAT); m.castShadow = true; out.add(m); }
+  if (geo) { const m = new THREE.Mesh(geo, shiny === 'skin' ? VC_SKIN : shiny ? VC_ITEM : VC_MAT); m.castShadow = true; out.add(m); }
   for (const o of glow) out.add(o.clone());
   return out;
 }
@@ -222,8 +225,10 @@ function limbGeo(parts, glow, lite) {
   if (!geo) {
     const mb = new MeshBuilder(glow ? 0 : 0.07);
     for (const [w, h, d, hex, x, y, z, o] of parts) {
-      if (lite && Math.max(w, h, d) < 0.09) continue;
-      if (o) mb.rbox(x, y, z, w, h, d, lin(hex), lite ? { ...o, c: 0, b: 0 } : o);
+      const sz = Math.max(w, h, d);
+      if (lite && sz < 0.09) continue;
+      const dens = sz < 0.05 ? { q: 4, a: 3 } : sz < 0.1 ? { q: 6, a: 4 } : null;
+      if (o) mb.rbox(x, y, z, w, h, d, lin(hex), lite ? { ...o, c: 0, b: 0 } : dens ? { ...o, ...dens } : o);
       else mb.box(x - w / 2, y - h / 2, z - d / 2, x + w / 2, y + h / 2, z + d / 2, lin(hex));
     }
     geo = mb.build();
@@ -501,16 +506,21 @@ export function makeHumanoid(o) {
       [0.165, 0.28, 0.18, up, 0, -0.2, 0, R(0.28, { tx: 1.06, tz: 1.04 })],
       [0.155, 0.08, 0.17, o.bare ? skin : dk(sleeve, 0.88), 0, -0.355, 0, R(0.32)],
       [0.15, 0.17, 0.16, fore, 0, -0.45, 0, R(0.28, { tx: 1.06, tz: 1.05 })],
-      [0.125, 0.1, 0.14, skin, 0, -0.6, 0, R(0.28)],
-      [0.045, 0.085, 0.05, skin, -side * 0.02, -0.61, -0.08, R(0.35)],
+      [0.13, 0.07, 0.125, skin, 0, -0.55, 0, R(0.34)],
+      [0.118, 0.1, 0.062, skin, 0, -0.615, -0.006, R(0.32, { tx: 1.04 })],
     ];
-    // пальцы: у зомби длиннее и скрючены, с тёмными ногтями
-    const fl = o.zombie ? 0.1 : 0.075;
+    // пальцы из двух фаланг, у зомби длиннее и скрючены, с тёмными ногтями; большой палец сбоку
+    const zf = o.zombie, L1 = zf ? 0.058 : 0.048, L2 = zf ? 0.05 : 0.04, c1 = zf ? 0.4 : 0.22, c2 = zf ? 0.75 : 0.35;
     for (let f = 0; f < 4; f++) {
-      const x = (f - 1.5) * 0.029;
-      A.push([0.027, fl, 0.03, sk2, x, -0.65 - fl / 2, -0.012 - (o.zombie ? 0.012 : 0), R(0.35, { rx: o.zombie ? 0.45 : 0.2 })]);
-      if (o.zombie) A.push([0.022, 0.016, 0.018, dk(skin, 0.45), x, -0.65 - fl + 0.004, -0.05]);
+      const x = (f - 1.5) * 0.028, k = f === 3 ? 0.85 : f === 1 ? 1.06 : 1;
+      const y0 = -0.662, z0 = -0.008, l1 = L1 * k, l2 = L2 * k;
+      const y1 = y0 - Math.cos(c1) * l1, z1 = z0 - Math.sin(c1) * l1;
+      A.push([0.026, l1 + 0.012, 0.027, sk2, x, y0 - Math.cos(c1) * l1 / 2, z0 - Math.sin(c1) * l1 / 2, R(0.45, { rx: c1 })]);
+      A.push([0.023, l2 + 0.008, 0.024, sk2, x, y1 - Math.cos(c1 + c2) * l2 / 2, z1 - Math.sin(c1 + c2) * l2 / 2, R(0.45, { rx: c1 + c2 })]);
+      if (zf) A.push([0.02, 0.014, 0.012, dk(skin, 0.45), x, y1 - Math.cos(c1 + c2) * l2 * 0.92, z1 - Math.sin(c1 + c2) * l2 * 0.92 + 0.008, R(0.4, { rx: c1 + c2 })]);
     }
+    A.push([0.032, 0.05, 0.034, skin, -side * 0.062, -0.615, -0.028, R(0.45, { rz: side * 0.5, rx: 0.35 })]);
+    A.push([0.027, 0.04, 0.029, sk2, -side * 0.078, -0.652, -0.045, R(0.45, { rz: side * 0.25, rx: 0.7 })]);
     if (!o.bare && !torn) A.push([0.165, 0.045, 0.175, dk(sleeve, 0.72), 0, -0.535, 0, R(0.3)]);
     if (o.bare) A.push([0.07, 0.03, 0.2, shirt, -side * 0.03, 0.04, 0, R(0.3)]);
     if (torn) A.push([0.17, 0.035, 0.185, dk(sleeve, 0.6), 0, -0.375, 0, R(0.3)], [0.05, 0.08, 0.012, WOUND, 0, -0.46, -0.083]);
@@ -831,7 +841,7 @@ function axeLike(g, handle, head, edge, pick) {
 }
 
 // тела вращения гранаты ПГ-7В: профиль [радиус, высота от хвоста], ось — +y (носом вперёд после поворота)
-const lathe = pts => { const geo = new THREE.LatheGeometry(pts.map(([r, h]) => new THREE.Vector2(r, h)), 40); SMOOTH.add(geo); return geo; };
+const lathe = pts => { const geo = new THREE.LatheGeometry(pts.map(([r, h]) => new THREE.Vector2(r, h)), 64); SMOOTH.add(geo); return geo; };
 const PG7_HEAD = lathe([[0, 0], [0.021, 0], [0.024, 0.004], [0.042, 0.05], [0.0425, 0.058], [0.0425, 0.15], [0.041, 0.165], [0.037, 0.195], [0.031, 0.225], [0.024, 0.25], [0.016, 0.272], [0.0105, 0.285], [0, 0.285]]);
 const PG7_FUZE = lathe([[0, 0], [0.0105, 0], [0.0098, 0.018], [0.0084, 0.034], [0.0062, 0.042], [0.003, 0.045], [0, 0.0455]]);
 
@@ -1363,50 +1373,226 @@ export function rocketModel() {
 }
 
 // ---------- руки от первого лица ----------
-// предплечье: запястье, манжета, рукав со складками; локальная ось +Z — от запястья к локтю
+// Кисть собрана как настоящая: ладонь с подушками и сухожилиями, костяшки, пальцы по фалангам (капсулы
+// со сгибом в каждом суставе), ногти, большой палец со своей осью вращения. Всё с гладким затенением.
+// Система кисти: пальцы вдоль −z, тыльная сторона +y, ладонь −y, запястье +z;
+// side = 1 — правая (большой палец у −x), −1 — левая.
+
+// смешать два цвета: t = 0 — a, 1 — b
+function mix(a, b, t) {
+  const c = k => Math.round(((a >> k) & 255) * (1 - t) + ((b >> k) & 255) * t);
+  return (c(16) << 16) | (c(8) << 8) | c(0);
+}
+
+const smoothCache = new Map();
+function cachedGeo(key, make) {
+  let g = smoothCache.get(key);
+  if (!g) { g = make(); SMOOTH.add(g); smoothCache.set(key, g); }
+  return g;
+}
+
+// капсула: радиус r, длина цилиндрической части len, ось — y
+const capsGeo = (r, len) => cachedGeo(`c${r.toFixed(4)}:${len.toFixed(4)}`, () => new THREE.CapsuleGeometry(r, Math.max(0.0005, len), 8, 22));
+
+// «скруглённый брусок» (суперэллипсоид): k = 1 — эллипсоид, меньше — ближе к бруску;
+// tx/ty — сужение сечения к +z. Нормали считаются точно (градиент поверхности), без шва
+function blobGeo(w, h, d, k, tx, ty) {
+  return cachedGeo(`b${[w, h, d, k, tx, ty].map(v => v.toFixed(4)).join(',')}`, () => {
+    const g = new THREE.SphereGeometry(1, 32, 22);
+    const P = g.attributes.position, Nn = g.attributes.normal, m = 2 / k;
+    const a = w / 2, b = h / 2, c = d / 2;
+    const f = (v, s) => Math.sign(v) * Math.abs(v) ** k * s;
+    const gr = (v, s) => Math.sign(v) * Math.abs(v / s) ** (m - 1) / s;
+    for (let i = 0; i < P.count; i++) {
+      let x = f(P.getX(i), a), y = f(P.getY(i), b);
+      const z = f(P.getZ(i), c);
+      let nx = gr(x, a), ny = gr(y, b);
+      const nz = gr(z, c);
+      const t = z / d + 0.5, sx = 1 + (tx - 1) * t, sy = 1 + (ty - 1) * t;
+      x *= sx; y *= sy; nx /= sx; ny /= sy;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      P.setXYZ(i, x, y, z);
+      Nn.setXYZ(i, nx / l, ny / l, nz / l);
+    }
+    return g;
+  });
+}
+
+// усечённый конус вдоль +z от 0 до len (радиусы r0 → r1), без торцов
+const coneGeo = (r0, r1, len) => cachedGeo(`f${[r0, r1, len].map(v => v.toFixed(4)).join(',')}`, () => {
+  const g = new THREE.CylinderGeometry(r1, r0, len, 40, 6, true);
+  g.rotateX(PI2);
+  g.translate(0, 0, len / 2);
+  return g;
+});
+
+// складка рукава: тор вокруг оси z
+const foldGeo = (R, t) => cachedGeo(`t${R.toFixed(4)}:${t.toFixed(4)}`, () => new THREE.TorusGeometry(R, t, 10, 48));
+
+function blob(p, w, h, d, hex, x, y, z, o = {}) {
+  const m = new THREE.Mesh(blobGeo(w, h, d, o.k ?? 0.7, o.tx ?? 1, o.ty ?? 1), M(hex));
+  m.position.set(x, y, z);
+  m.rotation.set(o.rx || 0, o.ry || 0, o.rz || 0);
+  p.add(m);
+  return m;
+}
+
+// фаланга: капсула радиуса r от сустава (начало координат) вдоль −z на длину len; sx/sy — овал сечения.
+// У концевой фаланги (tip) скругление заканчивается ровно на кончике
+function phal(p, r, len, hex, tip, sx = 1.08, sy = 0.9) {
+  const cyl = tip ? Math.max(0.001, len - r) : len;
+  const m = new THREE.Mesh(capsGeo(r, cyl), M(hex));
+  m.rotation.x = PI2;
+  m.scale.set(sx, 1, sy);
+  m.position.z = -cyl / 2;
+  p.add(m);
+  return m;
+}
+
+// пальцы правой руки: x и z костяшки, радиус, длины фаланг, развод (у левой — зеркально)
+const FINGERS = [
+  { x: -0.0285, z: -0.043, r: 0.0091, L: [0.041, 0.024, 0.02], spl: -0.07 },
+  { x: -0.0095, z: -0.046, r: 0.0094, L: [0.045, 0.028, 0.021], spl: -0.01 },
+  { x: 0.0095, z: -0.044, r: 0.0089, L: [0.042, 0.026, 0.02], spl: 0.05 },
+  { x: 0.027, z: -0.038, r: 0.0077, L: [0.033, 0.02, 0.018], spl: 0.12 },
+];
+const PHAL_R = [1, 0.93, 0.86];
+
+// кисть в позе pose: curl — сгиб каждого пальца по суставам [осн, сред, конц] (рад, к ладони),
+// spread — развод пальцев, thumb — { yaw: отвод, pitch: к ладони, roll: разворот ногтя, c: сгибы [пясть, осн, конц] }
+function hand(p, side, skin, pose) {
+  const h = new THREE.Group();
+  p.add(h);
+  const palm = mix(skin, 0xf0c2ac, 0.14), knuckle = mix(skin, 0xc4826c, 0.14), nail = mix(skin, 0xf8e2dc, 0.62), crease = mix(skin, 0x9a5a48, 0.16);
+  // ладонь: к запястью уже и тоньше; невысокие подушки под пальцами, у большого пальца и у мизинца
+  blob(h, 0.082, 0.027, 0.094, skin, 0, 0, 0, { k: 0.6, tx: 0.8, ty: 0.88 });
+  blob(h, 0.074, 0.01, 0.024, palm, 0.001 * side, -0.0085, -0.034, { k: 0.85 });
+  blob(h, 0.03, 0.02, 0.056, palm, -side * 0.02, -0.0065, 0.014, { k: 0.85, ry: side * 0.3 });
+  blob(h, 0.022, 0.012, 0.058, palm, side * 0.028, -0.0072, 0.008, { k: 0.85 });
+  // костяшки на тыльной стороне
+  for (const F of FINGERS) blob(h, 0.019, 0.012, 0.02, knuckle, F.x * side, 0.0075, F.z + 0.004, { k: 0.9 });
+  // пальцы
+  FINGERS.forEach((F, i) => {
+    const c = pose.curl[i];
+    let j = sub(h, F.x * side, 0.001, F.z, 0, -F.spl * side * (pose.spread ?? 1), 0);
+    for (let s = 0; s < 3; s++) {
+      const r = F.r * PHAL_R[s], L = F.L[s];
+      j = sub(j, 0, 0, s ? -F.L[s - 1] : 0, -(c[s] || 0), 0, 0);
+      phal(j, r, L, skin, s === 2);
+      // складка на сгибе и ноготь
+      if (s) blob(j, r * 1.9, r * 1.2, r * 0.5, crease, 0, -r * 0.2, r * 0.05, { k: 0.9 });
+      if (s === 2) blob(j, r * 1.45, r * 0.4, L * 0.6, nail, 0, r * 0.76, -L * 0.6, { k: 0.72, rx: -0.06 });
+    }
+  });
+  // большой палец: своя ось — отведён в сторону и развёрнут ногтем наружу
+  const T = pose.thumb || {};
+  const t0 = sub(h, -side * 0.02, -0.007, 0.03, 0, (T.yaw ?? 0.55) * side, 0);
+  const t1 = sub(t0, 0, 0, 0, -(T.pitch ?? 0.35), 0, 0);
+  let j = sub(t1, 0, 0, 0, 0, 0, (T.roll ?? 1.0) * side);
+  const TL = [0.04, 0.03, 0.027], TR = [0.0142, 0.0108, 0.0098], tc = T.c || [0, 0.2, 0.2];
+  for (let s = 0; s < 3; s++) {
+    j = sub(j, 0, 0, s ? -TL[s - 1] : 0, -(tc[s] || 0), 0, 0);
+    phal(j, TR[s], TL[s], skin, s === 2, 1.1, 0.95);
+    if (s === 2) blob(j, TR[s] * 1.5, TR[s] * 0.4, TL[s] * 0.58, nail, 0, TR[s] * 0.8, -TL[s] * 0.6, { k: 0.72, rx: -0.06 });
+  }
+  return h;
+}
+
+// повернуть группу так, чтобы её оси x, y, z смотрели вдоль данных векторов
+function basis(g, xv, yv, zv) {
+  g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...xv), new THREE.Vector3(...yv), new THREE.Vector3(...zv)));
+}
+
+// точка запястья кисти в системе её родителя
+function wristOf(h) {
+  h.updateMatrix();
+  return new THREE.Vector3(0, -0.002, 0.05).applyMatrix4(h.matrix);
+}
+
+// предплечье: запястье, кожа, подвёрнутая манжета и рукав со складками; группа смотрит вдоль +z от запястья к локтю
 function forearm(p, skin, sleeve, x, y, z, rx, ry) {
   const a = sub(p, x, y, z, rx, ry, 0);
-  rz(a, 0.052, 0.09, 0.046, skin, 0, 0, 0.035);
-  rz(a, 0.078, 0.045, 0.072, dk(sleeve, 0.6), 0, 0, 0.09);
-  rz(a, 0.082, 0.4, 0.078, sleeve, 0, 0, 0.31, { c: 0.38, tx: 1.15, tz: 1.12 });
-  for (const t of [0.22, 0.55]) rz(a, 0.082 * (1 + 0.15 * t) + 0.006, 0.014, 0.078 * (1 + 0.12 * t) + 0.006, dk(sleeve, 0.82), 0, 0, 0.11 + 0.4 * t, { c: 0.38 });
+  const cuff = dk(sleeve, 0.78), fold = dk(sleeve, 0.86);
+  blob(a, 0.06, 0.03, 0.07, skin, 0, 0, 0.01, { k: 0.8, tx: 0.92 });
+  const fa = new THREE.Mesh(coneGeo(0.0245, 0.033, 0.12), M(skin));
+  fa.scale.set(1.18, 0.82, 1);
+  fa.position.z = 0.0;
+  a.add(fa);
+  const cf = new THREE.Mesh(coneGeo(0.039, 0.042, 0.04), M(cuff));
+  cf.scale.set(1.12, 0.92, 1);
+  cf.position.z = 0.06;
+  a.add(cf);
+  const lip = new THREE.Mesh(foldGeo(0.039, 0.0055), M(cuff));
+  lip.scale.set(1.12, 0.92, 1);
+  lip.position.z = 0.061;
+  a.add(lip);
+  const sl = new THREE.Mesh(coneGeo(0.043, 0.053, 0.4), M(sleeve));
+  sl.scale.set(1.12, 0.94, 1);
+  sl.position.z = 0.095;
+  a.add(sl);
+  [[0.15, 0.12], [0.22, -0.16], [0.3, 0.1], [0.39, -0.08]].forEach(([fz, tilt], i) => {
+    const r = 0.043 + (fz - 0.095) / 0.4 * 0.01;
+    const f = new THREE.Mesh(foldGeo(r, 0.0042 + (i & 1) * 0.001), M(fold));
+    f.scale.set(1.12, 0.94, 1);
+    f.position.z = fz;
+    f.rotation.x = tilt;
+    a.add(f);
+  });
 }
 
-// правая кисть на пистолетной рукояти (рамка наклонена вместе с рукоятью)
+// правая кисть на пистолетной рукояти (рамка наклонена вместе с рукоятью):
+// ладонь справа и сзади рукояти, пальцы обхватывают переднюю грань, указательный — у спуска, большой — слева на рамке
 function gripHand(p, skin, sleeve, y, z, rake) {
-  const h = sub(p, 0, y, z, -rake), s2 = dk(skin, 0.88);
-  rp(h, 0.06, 0.085, 0.07, skin, 0.004, -0.055, 0.008, { c: 0.38 });
-  for (let i = 0; i < 3; i++) rp(h, 0.062, 0.022, 0.024, s2, 0.004, -0.04 - i * 0.024, -0.03, { c: 0.45 });
-  rz(h, 0.018, 0.06, 0.018, skin, 0.022, -0.006, -0.045);
-  rz(h, 0.018, 0.055, 0.02, skin, -0.03, -0.014, -0.02);
-  forearm(h, skin, sleeve, 0.004, -0.07, 0.04, 0.35 + rake, 0.22);
+  const G = sub(p, 0, y, z, -rake);
+  const h = hand(G, 1, skin, {
+    curl: [[0.55, 0.85, 0.35], [1.45, 1.3, 0.55], [1.5, 1.3, 0.55], [1.5, 1.25, 0.5]], spread: 0.25,
+    thumb: { yaw: 0.85, pitch: 0.55, roll: 1.25, c: [0.25, 0.35, 0.15] },
+  });
+  h.position.set(0.033, -0.05, 0.016);
+  basis(h, [0, -1, 0], [1, 0, 0], [0, 0, 1]);
+  const w = wristOf(h);
+  forearm(G, skin, sleeve, w.x, w.y, w.z, 0.35 + rake, 0.22);
 }
 
-// левая кисть снизу под цевьём: ладонь, пальцы справа, большой палец слева
+// левая кисть под цевьём: ладонь снизу-слева, пальцы обхватывают правую сторону, большой палец вдоль левой
 function supportHand(p, skin, sleeve, y, z) {
-  const h = sub(p, 0, y, z), s2 = dk(skin, 0.88);
-  rp(h, 0.07, 0.03, 0.085, skin, -0.006, 0, 0, { c: 0.4 });
-  for (let i = 0; i < 4; i++) rp(h, 0.018, 0.05, 0.02, s2, 0.034, 0.018, -0.032 + i * 0.021, { c: 0.4 });
-  rp(h, 0.018, 0.04, 0.06, skin, -0.04, 0.014, 0.005, { c: 0.4 });
-  forearm(h, skin, sleeve, -0.02, -0.01, 0.03, 0.45, -0.6);
+  const S = sub(p, 0, y, z);
+  const h = hand(S, -1, skin, {
+    curl: [[1.0, 0.75, 0.4], [1.05, 0.8, 0.4], [1.1, 0.8, 0.4], [1.15, 0.8, 0.4]], spread: 0.2,
+    thumb: { yaw: 0.35, pitch: 0.05, roll: 1.0, c: [0, 0.15, 0.1] },
+  });
+  h.position.set(-0.018, -0.012, 0.004);
+  basis(h, [0, 0, -1], [0, -1, 0], [-1, 0, 0]);
+  h.rotateZ(-0.35);
+  const w = wristOf(h);
+  forearm(S, skin, sleeve, w.x, w.y, w.z, 0.45, -0.6);
 }
 
-// кулак вокруг рукояти, идущей вдоль Z
+// кулак вокруг рукояти, идущей вдоль z: тыльная сторона справа, пальцы снизу, большой палец сверху
 function fistOnHandle(p, skin, sleeve, z) {
-  const h = sub(p, 0, 0, z), s2 = dk(skin, 0.88);
-  rp(h, 0.062, 0.07, 0.085, skin, 0.006, -0.006, 0, { c: 0.4 });
-  for (let i = 0; i < 4; i++) rp(h, 0.02, 0.026, 0.02, s2, -0.026, -0.018, -0.03 + i * 0.02, { c: 0.45 });
-  rp(h, 0.022, 0.02, 0.06, skin, -0.016, 0.03, -0.012, { c: 0.4 });
-  forearm(h, skin, sleeve, 0.012, -0.03, 0.04, 0.45, 0.25);
+  const Hd = sub(p, 0, 0, z);
+  const h = hand(Hd, 1, skin, {
+    curl: [[1.35, 1.45, 0.75], [1.4, 1.5, 0.75], [1.45, 1.5, 0.75], [1.5, 1.45, 0.7]], spread: 0.15,
+    thumb: { yaw: 0.6, pitch: 0.75, roll: 1.2, c: [0.3, 0.45, 0.3] },
+  });
+  h.position.set(0.03, 0.006, 0);
+  basis(h, [0, 0, 1], [1, 0, 0], [0, 1, 0]);
+  h.rotateX(0.5);
+  const w = wristOf(h);
+  forearm(Hd, skin, sleeve, w.x, w.y, w.z, 0.45, 0.25);
 }
 
-// раскрытая ладонь под едой, лекарствами и блоками
+// раскрытая ладонь вверх под едой, лекарствами и блоками
 function palmHand(p, skin, sleeve, y) {
-  const h = sub(p, 0.02, y, 0.03), s2 = dk(skin, 0.88);
-  rp(h, 0.075, 0.035, 0.09, skin, 0, 0, 0, { c: 0.4 });
-  for (let i = 0; i < 4; i++) rp(h, 0.018, 0.03, 0.026, s2, -0.027 + i * 0.018, 0.012, -0.05, { c: 0.4 });
-  rp(h, 0.018, 0.035, 0.05, skin, -0.044, 0.016, -0.01, { c: 0.4 });
-  forearm(h, skin, sleeve, 0, -0.01, 0.045, 0.5, 0.2);
+  const P = sub(p, 0.02, y, 0.03);
+  const h = hand(P, 1, skin, {
+    curl: [[0.18, 0.22, 0.1], [0.15, 0.2, 0.1], [0.2, 0.22, 0.1], [0.28, 0.25, 0.12]], spread: 1,
+    thumb: { yaw: 0.65, pitch: 0.25, roll: 1.0, c: [0, 0.1, 0.1] },
+  });
+  h.position.set(0, -0.006, -0.005);
+  basis(h, [-1, 0, 0], [0, -1, 0], [0, 0, 1]);
+  const w = wristOf(h);
+  forearm(P, skin, sleeve, w.x, w.y, w.z, 0.5, 0.2);
 }
 
 const VM_GRIP = { pistol: [-0.008, 0.032, 0.28], smg: [-0.03, 0.04, 0.28], shotgun: [-0.004, 0.125, 0.95], rifle: [-0.03, 0.04, 0.28], asval: [-0.04, 0.036, 0.28], sniper: [-0.04, 0.085, 0.35], rpg: [0.044, 0.016, 0.22], rpg_e: [0.044, 0.016, 0.22] };
@@ -1423,19 +1609,23 @@ export function makeViewArms(id, cat, skin, sleeve) {
     if (sp) supportHand(g, skin, sleeve, sp[0], sp[1]);
   } else if (cat === 'melee') fistOnHandle(g, skin, sleeve, VM_HANDLE[id] ?? 0.03);
   else palmHand(g, skin, sleeve, cat === 'block' ? -0.15 : -0.065);
-  return bake(g);
+  return fromBaked(bakeParts(g, 0, 'skin'));
 }
 
-// кулак в стойке: костяшки, складки пальцев, большой палец поперёк, запястье и рукав
+// кулак в стойке: пальцы сжаты в ладонь, большой палец поверх среднего и указательного, костяшки вперёд
 export function makeFist(side, skin, sleeve) {
-  const h = new THREE.Group();
-  rp(h, 0.1, 0.09, 0.115, skin, 0, 0, 0, { c: 0.22, b: 0.15 });
-  for (let i = 0; i < 4; i++) rp(h, 0.026, 0.03, 0.04, dk(skin, 0.92), (i - 1.5) * 0.024, 0.03, -0.048, { c: 0.3, b: 0.2 });
-  for (let i = 0; i < 3; i++) part(h, 0.004, 0.05, 0.01, dk(skin, 0.7), (i - 1) * 0.024, -0.012, -0.058);
-  rp(h, 0.034, 0.032, 0.075, skin, -side * 0.05, -0.022, -0.022, { c: 0.3 });
-  rp(h, 0.085, 0.07, 0.07, skin, 0, -0.012, 0.07, { c: 0.3 });
-  forearm(h, skin, sleeve, 0, -0.03, 0.08, 0.62, 0);
-  return bake(h);
+  const g = new THREE.Group();
+  const h = hand(g, side, skin, {
+    curl: [[1.5, 1.75, 0.95], [1.55, 1.8, 0.95], [1.55, 1.75, 0.95], [1.5, 1.7, 0.9]], spread: 0.1,
+    thumb: { yaw: 0.15, pitch: 0.55, roll: 1.35, c: [0.25, 0.95, 0.7] },
+  });
+  h.scale.setScalar(1.15);
+  // сжатая кисть ниже раскрытой — поднимаем, чтобы в стойке кулаки были видны целиком
+  h.position.set(0, 0.055, 0.01);
+  h.rotation.set(0.18, 0, 0);
+  const w = wristOf(h);
+  forearm(g, skin, sleeve, w.x, w.y, w.z, 0.62, 0);
+  return fromBaked(bakeParts(g, 0, 'skin'));
 }
 
 export const GUN_IDS = new Set(['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'rpg', 'rpg_e', 'knife', 'bat', 'axe', 'pickaxe', 'iaxe', 'ipick', 'machete', 'hammer']);

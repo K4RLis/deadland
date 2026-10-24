@@ -84,6 +84,16 @@ export class MeshBuilder {
     this.len += 9;
   }
 
+  // треугольник по точкам-массивам [x, y, z] со своими нормалями вершин (гладкое затенение)
+  triA(a, b, c, na, nb, nc, col) {
+    this.grow(9);
+    const o = this.len, p = this.p, n = this.n;
+    p[o] = a[0]; p[o + 1] = a[1]; p[o + 2] = a[2]; p[o + 3] = b[0]; p[o + 4] = b[1]; p[o + 5] = b[2]; p[o + 6] = c[0]; p[o + 7] = c[1]; p[o + 8] = c[2];
+    n[o] = na[0]; n[o + 1] = na[1]; n[o + 2] = na[2]; n[o + 3] = nb[0]; n[o + 4] = nb[1]; n[o + 5] = nb[2]; n[o + 6] = nc[0]; n[o + 7] = nc[1]; n[o + 8] = nc[2];
+    this.putCol(o, col[0], col[1], col[2]);
+    this.len += 9;
+  }
+
   // четырёхугольник a-b-c-d против часовой стрелки (если смотреть снаружи)
   quad(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, col) {
     this.tri(ax, ay, az, bx, by, bz, cx, cy, cz, col);
@@ -117,30 +127,31 @@ export class MeshBuilder {
     }
   }
 
-  // «скруглённый» бокс с центром (cx, cy, cz): сечение — восьмиугольник со скошенными рёбрами, торцы со скосом.
-  // o.c — скос вертикальных рёбер (доля меньшей стороны), o.b — скос торцов, o.tx/o.tz — масштаб верхнего
-  // сечения (сужение к верху), o.rx/o.ry/o.rz — поворот вокруг центра
+  // «скруглённый» бокс с центром (cx, cy, cz): сечение со скруглёнными рёбрами, торцы со скруглением.
+  // o.c — скругление вертикальных рёбер (доля меньшей стороны), o.b — скругление торцов, o.tx/o.tz — масштаб верхнего
+  // сечения (сужение к верху), o.rx/o.ry/o.rz — поворот вокруг центра, o.q — точек на дуге угла (9),
+  // o.a — колец на скруглении торца (7). Со скруглением затенение гладкое (нормали вершин), без него (c = 0) — гранёное
   rbox(cx, cy, cz, w, h, d, col, o = {}) {
     const m = Math.min(w, d), cf = o.c ?? 0.25;
     const c = m * cf;
     const bv = Math.min(h * 0.4, m * 0.4, Math.min(m, h) * (o.b ?? cf * 0.6));
-    const tx = o.tx ?? 1, tz = o.tz ?? 1;
+    const tx = o.tx ?? 1, tz = o.tz ?? 1, Q = o.q ?? 9, A = o.a ?? 7;
     const ring = (y, ins) => {
       const t = (y + h / 2) / h, sx = 1 + (tx - 1) * t, sz = 1 + (tz - 1) * t;
       const hw = w / 2 - ins, hd = d / 2 - ins;
       let pts;
       if (c > 1e-5) {
-        // углы скруглены дугой из семи точек (через 15°)
+        // углы скруглены дугой из Q точек (по умолчанию девять — через 11,25°)
         const k = Math.max(c * 0.3, c - ins * 0.414);
         pts = [];
         for (const [cx2, cz2, a0] of [[hw - k, -hd + k, -Math.PI / 2], [hw - k, hd - k, 0], [-hw + k, hd - k, Math.PI / 2], [-hw + k, -hd + k, Math.PI]]) {
-          for (let q = 0; q < 7; q++) { const a = a0 + q * Math.PI / 12; pts.push([cx2 + Math.cos(a) * k, cz2 + Math.sin(a) * k]); }
+          for (let q = 0; q < Q; q++) { const a = a0 + q * Math.PI / 2 / (Q - 1); pts.push([cx2 + Math.cos(a) * k, cz2 + Math.sin(a) * k]); }
         }
       } else pts = [[hw, -hd], [hw, hd], [-hw, hd], [-hw, -hd]];
       return pts.map(([x, z]) => [x * sx, y, z * sz]);
     };
-    // торцы скруглены четвертью окружности: кольца через 22,5°
-    const arc = [0, 1, 2, 3, 4].map(i => { const a = i * Math.PI / 8; return [1 - Math.sin(a), 1 - Math.cos(a)]; });
+    // торцы скруглены четвертью окружности: A колец (по умолчанию семь — через 15°)
+    const arc = [...Array(A).keys()].map(i => { const a = i * Math.PI / 2 / (A - 1); return [1 - Math.sin(a), 1 - Math.cos(a)]; });
     const ys = bv > 1e-4
       ? [...arc.map(([ins, dy]) => [-h / 2 + bv * dy, bv * ins]), ...arc.slice().reverse().map(([ins, dy]) => [h / 2 - bv * dy, bv * ins])]
       : [[-h / 2, 0], [h / 2, 0]];
@@ -152,12 +163,73 @@ export class MeshBuilder {
       return [_v.x + cx, _v.y + cy, _v.z + cz];
     }));
     const ctr = [cx, cy, cz], n = R[0].length;
-    for (let k = 0; k + 1 < R.length; k++) for (let i = 0; i < n; i++) {
-      const j = (i + 1) % n;
-      this.otri(R[k][i], R[k][j], R[k + 1][j], ctr, col);
-      this.otri(R[k][i], R[k + 1][j], R[k + 1][i], ctr, col);
+    if (c <= 1e-5 || this.flat) {
+      for (let k = 0; k + 1 < R.length; k++) for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        this.otri(R[k][i], R[k][j], R[k + 1][j], ctr, col);
+        this.otri(R[k][i], R[k + 1][j], R[k + 1][i], ctr, col);
+      }
+      for (const r of [R[0], R[R.length - 1]]) for (let i = 1; i + 1 < n; i++) this.otri(r[0], r[i], r[i + 1], ctr, col);
+      return;
     }
-    for (const r of [R[0], R[R.length - 1]]) for (let i = 1; i + 1 < n; i++) this.otri(r[0], r[i], r[i + 1], ctr, col);
+    this.smoothRings(R, ctr, col, bv > 1e-4);
+  }
+
+  // сетка колец (замкнутых контуров) с гладкими нормалями: нормаль вершины — среднее нормалей соседних граней.
+  // Торцы плоские; при скруглённых торцах (roundEnds) крайние кольца плавно переходят в торец
+  smoothRings(R, ctr, col, roundEnds) {
+    const K = R.length, n = R[0].length;
+    const N = R.map(r => r.map(() => [0, 0, 0]));
+    const out = (nx, ny, nz, a, b) => (nx * ((a[0] + b[0]) / 2 - ctr[0]) + ny * ((a[1] + b[1]) / 2 - ctr[1]) + nz * ((a[2] + b[2]) / 2 - ctr[2])) >= 0;
+    const QN = [];
+    for (let k = 0; k + 1 < K; k++) {
+      const row = [];
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n, a = R[k][i], b = R[k][j], e = R[k + 1][j], f = R[k + 1][i];
+        // нормаль четырёхугольника — векторное произведение диагоналей, наружу от центра
+        const ux = e[0] - a[0], uy = e[1] - a[1], uz = e[2] - a[2], vx = f[0] - b[0], vy = f[1] - b[1], vz = f[2] - b[2];
+        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const l = Math.hypot(nx, ny, nz);
+        if (l < 1e-14) { row.push(null); continue; }
+        nx /= l; ny /= l; nz /= l;
+        if (!out(nx, ny, nz, a, e)) { nx = -nx; ny = -ny; nz = -nz; }
+        row.push([nx, ny, nz]);
+        for (const v of [N[k][i], N[k][j], N[k + 1][j], N[k + 1][i]]) { v[0] += nx; v[1] += ny; v[2] += nz; }
+      }
+      QN.push(row);
+    }
+    // нормаль торца (формула Ньюэлла), наружу
+    const capN = (r, other) => {
+      let x = 0, y = 0, z = 0;
+      for (let i = 0; i < n; i++) { const p = r[i], q = r[(i + 1) % n]; x += (p[1] - q[1]) * (p[2] + q[2]); y += (p[2] - q[2]) * (p[0] + q[0]); z += (p[0] - q[0]) * (p[1] + q[1]); }
+      const l = Math.hypot(x, y, z) || 1;
+      x /= l; y /= l; z /= l;
+      // наружу — от соседнего кольца
+      const d = (r[0][0] - other[0][0]) * x + (r[0][1] - other[0][1]) * y + (r[0][2] - other[0][2]) * z;
+      return d >= 0 ? [x, y, z] : [-x, -y, -z];
+    };
+    const caps = [[R[0], capN(R[0], R[1]), 0], [R[K - 1], capN(R[K - 1], R[K - 2]), K - 1]];
+    if (roundEnds) for (const [, cn, k] of caps) for (const v of N[k]) { v[0] += cn[0]; v[1] += cn[1]; v[2] += cn[2]; }
+    for (const r of N) for (const v of r) { const l = Math.hypot(v[0], v[1], v[2]) || 1; v[0] /= l; v[1] /= l; v[2] /= l; }
+    for (let k = 0; k + 1 < K; k++) for (let i = 0; i < n; i++) {
+      const qn = QN[k][i];
+      if (!qn) continue;
+      const j = (i + 1) % n, a = R[k][i], b = R[k][j], e = R[k + 1][j], f = R[k + 1][i];
+      const na = N[k][i], nb = N[k][j], ne = N[k + 1][j], nf = N[k + 1][i];
+      // порядок обхода — так, чтобы лицевая сторона смотрела наружу
+      const fx = (b[1] - a[1]) * (e[2] - a[2]) - (b[2] - a[2]) * (e[1] - a[1]);
+      const fy = (b[2] - a[2]) * (e[0] - a[0]) - (b[0] - a[0]) * (e[2] - a[2]);
+      const fz = (b[0] - a[0]) * (e[1] - a[1]) - (b[1] - a[1]) * (e[0] - a[0]);
+      if (fx * qn[0] + fy * qn[1] + fz * qn[2] >= 0) { this.triA(a, b, e, na, nb, ne, col); this.triA(a, e, f, na, ne, nf, col); }
+      else { this.triA(a, e, b, na, ne, nb, col); this.triA(a, f, e, na, nf, ne, col); }
+    }
+    for (const [r, cn] of caps) for (let i = 1; i + 1 < n; i++) {
+      const a = r[0], b = r[i], e = r[i + 1];
+      const fx = (b[1] - a[1]) * (e[2] - a[2]) - (b[2] - a[2]) * (e[1] - a[1]);
+      const fy = (b[2] - a[2]) * (e[0] - a[0]) - (b[0] - a[0]) * (e[2] - a[2]);
+      const fz = (b[0] - a[0]) * (e[1] - a[1]) - (b[1] - a[1]) * (e[0] - a[0]);
+      if (fx * cn[0] + fy * cn[1] + fz * cn[2] >= 0) this.triA(a, b, e, cn, cn, cn, col); else this.triA(a, e, b, cn, cn, cn, col);
+    }
   }
 
   // треугольник выпуклого тела: разворачивается наружу от ctr, яркость — по наклону грани

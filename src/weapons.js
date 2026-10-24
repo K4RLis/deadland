@@ -440,7 +440,7 @@ export class Weapons {
       // длинная труба РПГ — дальше от глаз, иначе раструб закрывает пол-экрана
       if (this.curId === 'rpg') { px += 0.03 * (1 - ads); py -= 0.02 * (1 - ads); pz -= 0.26; }
     } else if (cat === 'melee') {
-      px = 0.3; py = -0.3; pz = -0.48; rx = 0.25; ry = 0.15;
+      px = 0.2; py = -0.24; pz = -0.56; rx = 0.25; ry = 0.15;
     } else if (cat === 'fist') {
       px = 0.2; py = -0.26; pz = -0.4;
     } else if (cat === 'block') { px = 0.28; py = -0.28; pz = -0.5; ry = 0.6; }
