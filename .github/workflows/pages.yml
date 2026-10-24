@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Номер сборки в адресах файлов (чтобы браузер не брал старые из кэша)
+        run: python3 tools/stamp.py "${GITHUB_SHA::8}"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

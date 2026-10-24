@@ -96,26 +96,40 @@ function menuFrame(dt) {
 }
 
 // ---------- меню ----------
-$('m-ver').textContent = 'версия ' + C.VERSION + ' · мир 3000×3000 м · до ' + C.MAX_PLAYERS + ' игроков';
+$('m-ver').textContent = 'версия ' + C.VERSION + (window.BUILD && window.BUILD !== '__BUILD__' ? ' (' + window.BUILD + ')' : '') + ' · мир 3000×3000 м · до ' + C.MAX_PLAYERS + ' игроков';
 
 // ---------- автообновление ----------
-// GitHub Pages разрешает браузеру держать файлы в кэше 10 минут, и после выхода новой версии игра может
-// собраться из старых файлов. В меню сверяем версию с сервером; если она новее — перекачиваем все файлы
-// игры в кэш и перезагружаем страницу (один раз на версию, чтобы не зациклиться, пока CDN отдаёт старое).
+// При публикации в адреса всех файлов игры подставляется номер сборки (tools/stamp.py), поэтому для
+// обновления хватает свежей страницы. Сверяем номер с version.txt; если вышла новая сборка — в меню
+// перезагружаем страницу мимо кэша (один раз на сборку, без зацикливания), в игре — подсказываем выйти в меню.
+const BUILD = window.BUILD && window.BUILD !== '__BUILD__' ? window.BUILD : null;
+let updNotified = null;
 async function checkUpdate() {
+  if (!BUILD) return; // локальная разработка
   try {
-    const r = await fetch('src/config.js?t=' + Date.now(), { cache: 'no-store' });
-    const m = (await r.text()).match(/VERSION = '([^']+)'/);
-    if (!m || m[1] === C.VERSION || sessionStorage.getItem(SAVE + 'upd') === m[1]) return;
-    sessionStorage.setItem(SAVE + 'upd', m[1]);
-    $('m-ver').textContent = 'обновление до версии ' + m[1] + '…';
+    const r = await fetch('version.txt?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = (await r.text()).trim();
+    if (!v || v === BUILD) return;
+    if (game) {
+      if (updNotified !== v) { updNotified = v; game.ui.toast('Вышло обновление игры — выйди в меню, оно установится само'); }
+      return;
+    }
+    if (sessionStorage.getItem(SAVE + 'upd') === v) {
+      // перезагрузка уже была, а страница всё ещё старая — даём обновить вручную
+      $('m-ver').innerHTML = 'есть обновление · <a href="#" id="m-upd">обновить игру</a>';
+      $('m-upd').onclick = e => { e.preventDefault(); sessionStorage.removeItem(SAVE + 'upd'); checkUpdate(); };
+      return;
+    }
+    sessionStorage.setItem(SAVE + 'upd', v);
+    $('m-ver').textContent = 'обновление игры…';
     const own = performance.getEntriesByType('resource').map(e => e.name).filter(u => u.startsWith(location.origin));
-    const files = [...new Set([location.href.split('#')[0], ...own])];
-    await Promise.all(files.map(u => fetch(u, { cache: 'reload' }).catch(() => null)));
+    await Promise.all([location.href.split('#')[0], ...own].map(u => fetch(u, { cache: 'reload' }).catch(() => null)));
     if (!game) location.reload();
   } catch (_) { /* нет сети — играем в том, что есть */ }
 }
 setTimeout(checkUpdate, 1500);
+setInterval(checkUpdate, 120000);
 const nameInput = $('m-name');
 nameInput.value = prof.name;
 nameInput.addEventListener('input', () => { prof.name = nameInput.value.trim().slice(0, 16) || 'Выживший'; saveProfile(); });
@@ -306,7 +320,7 @@ async function bootGame(o) {
   try {
     game = new Game({
       ...o, settings: prof.settings, renderer, input, ui, sfx, icons, name: prof.name, color: prof.color,
-      onQuit: msg => { game = null; showMenu(msg); },
+      onQuit: msg => { game = null; showMenu(msg); setTimeout(checkUpdate, 300); },
       onSettings: saveProfile,
     });
     await game.init((p, text) => setLoading(0.15 + p * 0.85, text));

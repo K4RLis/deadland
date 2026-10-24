@@ -63,7 +63,7 @@ export class Sfx {
     this.samples = {};
     for (const k in SAMPLE_FILES) for (const f of SAMPLE_FILES[k]) {
       // версия в адресе: после обновления игры браузер не возьмёт старый файл с тем же именем из кэша
-      fetch('assets/sfx/' + f + '?v=' + VERSION)
+      fetch('assets/sfx/' + f + '?v=' + (window.BUILD || VERSION))
         .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
         .then(b => this.ctx.decodeAudioData(b))
         .then(buf => { (this.samples[k] ||= []).push(trimBuffer(this.ctx, buf, MAX_LEN[k] || 1.6)); })
