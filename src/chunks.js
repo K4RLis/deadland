@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import * as C from './config.js';
 import { MeshBuilder, lin, shade, PRIM, mat, addSurfaceDetail } from './mesh.js';
-import { hash2 } from './rng.js';
+import { hash2, smooth } from './rng.js';
 
 const TREE_COLORS = {
   pine: [0x2f5d34, 0x356a3a, 0x2a5530], oak: [0x4f8a3a, 0x5a9440, 0x46803a], birch: [0x7fb24a, 0x8cbc52],
@@ -31,6 +31,9 @@ const GEO = {
   trunk: jittered(new THREE.CylinderGeometry(0.75, 1, 1, 16, 8), 0.08, 500),
 };
 
+// после загрузки на видеокарту копия массива в памяти браузера больше не нужна
+function freeArray() { this.array = null; }
+
 // ближние чанки (3×3 вокруг игрока) — вдвое подробнее
 const GEO_HI = {
   rocks: [0, 1, 2, 3].map(s => jittered(new THREE.IcosahedronGeometry(1, 7), 0.4, 100 + s)),
@@ -46,7 +49,8 @@ export class ChunkRenderer {
     this.world = game.world;
     this.live = new Map();
     // геометрия чанков без нормалей (MeshBuilder flat) — нормаль грани считает видеокарта
-    this.matTerrain = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 3.2, 0.11);
+    // рельеф гладкий: нормали вершин, цвета плавно смешаны
+    this.matTerrain = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true }), 3.2, 0.09);
     this.matObj = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 6, 0.07);
     this.matGlass = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, transparent: true, opacity: 0.38, depthWrite: false });
     this.group = new THREE.Group();
@@ -131,9 +135,7 @@ export class ChunkRenderer {
     const d = this.world.chunk(cx, cz);
     const ch = { meshes: [], cx, cz, hi: this.isHi(cx, cz) };
     this.live.set(key, ch);
-    const tb = new MeshBuilder(0, true);
-    yield* this.terrainSteps(tb, cx, cz);
-    const terrain = new THREE.Mesh(tb.build(), this.matTerrain);
+    const terrain = new THREE.Mesh(yield* this.terrainSteps(cx, cz), this.matTerrain);
     terrain.receiveShadow = true;
     terrain.matrixAutoUpdate = false;
     ch.meshes.push(terrain);
@@ -200,53 +202,88 @@ export class ChunkRenderer {
     this.buildObjects(ch, this.world.chunk(cx, cz));
   }
 
-  *terrainSteps(mb, cx, cz) {
-    const w = this.world, S = C.SEG, st = C.TSTEP;
-    const N = S + 1;
-    const H = new Float32Array(N * N), R = new Float32Array(N * N), T = new Float32Array(N * N), D = new Float32Array(N * N);
+  // рельеф чанка: индексная сетка с плавными нормалями и смешанными цветами вершин.
+  // Высоты считаются с каймой в одну клетку — нормали на стыках чанков совпадают.
+  *terrainSteps(cx, cz) {
+    const w = this.world, S = C.SEG, st = C.TSTEP, N = S + 1, M = N + 2;
+    const H = new Float32Array(M * M), R = new Float32Array(N * N), T = new Float32Array(N * N), D = new Float32Array(N * N);
     const info = {};
     const ix0 = cx * S, iz0 = cz * S;
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-      if (i === 0 && j && j % 32 === 0) yield;
-      w.pointInfo((ix0 + i) * st, (iz0 + j) * st, info);
-      const k = j * N + i;
-      const h = info.h + w.jit(ix0 + i, iz0 + j, info);
-      H[k] = h; R[k] = info.road; T[k] = info.town; D[k] = info.dirt;
-      const hk = (ix0 + i + 2048) * 4096 + (iz0 + j + 2048);
-      if (!w.hCache.has(hk)) w.hCache.set(hk, h);
+    for (let j = -1; j <= N; j++) for (let i = -1; i <= N; i++) {
+      if (i === -1 && j > 0 && j % 32 === 0) yield;
+      let h;
+      if (i >= 0 && j >= 0 && i < N && j < N) {
+        w.pointInfo((ix0 + i) * st, (iz0 + j) * st, info);
+        h = info.h;
+        const k = j * N + i;
+        R[k] = info.road; T[k] = info.town; D[k] = info.dirt;
+        const hk = (ix0 + i + 2048) * 4096 + (iz0 + j + 2048);
+        if (!w.hCache.has(hk)) w.hCache.set(hk, h);
+      } else h = w.vh(ix0 + i, iz0 + j);
+      H[(j + 1) * M + i + 1] = h;
     }
     yield;
-    const cols = this.cols, road = cols.forest.road;
-    const x0 = cx * C.CHUNK, z0 = cz * C.CHUNK;
-    const pickCol = (a, b, e, xm, zm) => {
-      const h = (H[a] + H[b] + H[e]) / 3;
-      const rd = (R[a] + R[b] + R[e]) / 3, town = (T[a] + T[b] + T[e]) / 3, dirt = (D[a] + D[b] + D[e]) / 3;
-      const dh = Math.max(H[a], H[b], H[e]) - Math.min(H[a], H[b], H[e]);
-      const n = w.nA.noise(xm / 38, zm / 38);
-      const hv = hash2(7, Math.floor(xm * 3), Math.floor(zm * 3));
-      const bio = w.biomePick(xm, zm, ((hv >>> 10) & 1023) / 1023);
-      const col = cols[bio];
-      const jitter = 1 + ((hv & 255) / 255 - 0.5) * (rd > 0.55 ? 0.05 : 0.16);
-      let c;
-      if (rd > 0.55) c = road;
-      else if (town > 0.55) c = n > 0.55 ? col.dirt : (n > 0 ? col.grass2 : col.grass);
-      else if (h < 1.3) c = h < -0.8 ? col.seabed : col.sand;
-      else if (dh > 2.4) c = col.rock;
-      else if (h > C.BIOMES[bio].snowLine + n * 8) c = col.snow;
-      else if (dirt > 0.5) c = col.dirt;
-      else c = n > 0.15 ? col.grass2 : col.grass;
-      return shade(c, jitter);
-    };
-    for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
-      if (i === 0 && j && j % 24 === 0) yield;
-      const a = j * N + i, b = a + 1, c = a + N, e = c + 1; // a=00 b=10 c=01 e=11
-      const xa = x0 + i * st, za = z0 + j * st, xb = xa + st, zb = za + st;
-      // треугольники: (00, 11, 10) и (00, 01, 11)
-      const c1 = pickCol(a, e, b, xa + st * 0.66, za + st * 0.33);
-      mb.tri(xa, H[a], za, xb, H[e], zb, xb, H[b], za, c1);
-      const c2 = pickCol(a, c, e, xa + st * 0.33, za + st * 0.66);
-      mb.tri(xa, H[a], za, xa, H[c], zb, xb, H[e], zb, c2);
+    const pos = new Float32Array(N * N * 3), nor = new Int8Array(N * N * 3), col = new Uint16Array(N * N * 3);
+    const x0 = cx * C.CHUNK, z0 = cz * C.CHUNK, c = [0, 0, 0];
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      if (i === 0 && j && j % 32 === 0) yield;
+      const k = j * N + i, m = (j + 1) * M + i + 1, o = k * 3;
+      const x = x0 + i * st, z = z0 + j * st, h = H[m];
+      pos[o] = x; pos[o + 1] = h; pos[o + 2] = z;
+      let nx = H[m - 1] - H[m + 1], ny = 2 * st, nz = H[m - M] - H[m + M];
+      const l = Math.hypot(nx, ny, nz);
+      nx /= l; ny /= l; nz /= l;
+      nor[o] = Math.round(nx * 127); nor[o + 1] = Math.round(ny * 127); nor[o + 2] = Math.round(nz * 127);
+      this.groundColor(x, z, h, ny, R[k], T[k], D[k], c);
+      col[o] = Math.min(65535, c[0] * 65535); col[o + 1] = Math.min(65535, c[1] * 65535); col[o + 2] = Math.min(65535, c[2] * 65535);
     }
+    yield;
+    // треугольники (00, 11, 10) и (00, 01, 11) — так же делит клетку физика (world.height)
+    const idx = new Uint16Array(S * S * 6);
+    let o = 0;
+    for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
+      const a = j * N + i, b = a + 1, cc = a + N, e = cc + 1;
+      idx[o++] = a; idx[o++] = e; idx[o++] = b;
+      idx[o++] = a; idx[o++] = cc; idx[o++] = e;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3, true));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3, true));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeBoundingSphere();
+    for (const a of [...Object.values(g.attributes), g.index]) a.onUpload(freeArray);
+    return g;
+  }
+
+  // цвет земли в точке: смесь биомов по весам; трава двух оттенков, тропы, камень на крутых склонах,
+  // снег выше снеговой линии, песок у воды и дно — всё с плавными переходами
+  groundColor(x, z, h, ny, road, town, dirt, out) {
+    const w = this.world, bw = w.biomeW(x, z, this._gbw || (this._gbw = {}));
+    const n = w.nA.noise(x / 38, z / 38);
+    const tGrass = smooth(-0.15, 0.35, n), tDirt = Math.max(dirt * 0.9, town * smooth(0.4, 0.62, n));
+    const tRock = smooth(0.75, 0.58, ny), tSand = 1 - smooth(1.0, 1.9, h), tSea = 1 - smooth(-1.4, -0.4, h);
+    let r = 0, g = 0, b = 0;
+    for (const bio of ['forest', 'desert', 'snow']) {
+      const wt = bw[bio];
+      if (wt < 0.002) continue;
+      const cl = this.cols[bio], tSnow = smooth(C.BIOMES[bio].snowLine - 3, C.BIOMES[bio].snowLine + 5, h + n * 8);
+      for (let q = 0; q < 3; q++) {
+        let v = cl.grass[q] + (cl.grass2[q] - cl.grass[q]) * tGrass;
+        v += (cl.dirt[q] - v) * tDirt;
+        v += (cl.rock[q] - v) * tRock;
+        v += (cl.snow[q] - v) * tSnow;
+        v += (cl.sand[q] - v) * tSand;
+        v += (cl.seabed[q] - v) * tSea;
+        if (q === 0) r += v * wt; else if (q === 1) g += v * wt; else b += v * wt;
+      }
+    }
+    const tRoad = smooth(0.42, 0.62, road), rc = this.cols.forest.road;
+    r += (rc[0] - r) * tRoad; g += (rc[1] - g) * tRoad; b += (rc[2] - b) * tRoad;
+    // лёгкая неоднородность, чтобы земля не была пластиковой
+    const v = 1 + (((hash2(7, Math.floor(x * 0.9), Math.floor(z * 0.9)) & 255) / 255) - 0.5) * 0.06;
+    out[0] = r * v; out[1] = g * v; out[2] = b * v;
+    return out;
   }
 
   addTree(mb, t) {

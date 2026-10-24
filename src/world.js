@@ -128,21 +128,13 @@ export class World {
     return h;
   }
 
-  // небольшой детерминированный «излом» вершин — даёт гранёный low-poly рельеф (не на дорогах и в городах)
-  jit(ix, iz, info) {
-    if (info.h < 1.2) return 0;
-    const k = (1 - info.road) * (1 - Math.max(info.town, info.dirt));
-    if (k <= 0) return 0;
-    return (((hash2(this.seed ^ 0x51ed, ix, iz) & 1023) / 1023) - 0.5) * 0.95 * k;
-  }
-
   vh(ix, iz) {
     const key = (ix + 2048) * 4096 + (iz + 2048);
     let h = this.hCache.get(key);
     if (h === undefined) {
       if (this.hCache.size > 900000) this.hCache.clear();
       const o = this._vo || (this._vo = {});
-      h = this.pointInfo(ix * C.TSTEP, iz * C.TSTEP, o) + this.jit(ix, iz, o);
+      h = this.pointInfo(ix * C.TSTEP, iz * C.TSTEP, o);
       this.hCache.set(key, h);
     }
     return h;
