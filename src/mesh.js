@@ -238,8 +238,8 @@ export const PRIM = {
   cyl5: new THREE.CylinderGeometry(1, 1, 1, 5, 1).toNonIndexed(),
   cyl6: new THREE.CylinderGeometry(1, 1, 1, 6, 1).toNonIndexed(),
   cyl8: new THREE.CylinderGeometry(1, 1, 1, 8, 1).toNonIndexed(),
-  ico: new THREE.IcosahedronGeometry(1, 0).toNonIndexed(),
-  dodeca: new THREE.DodecahedronGeometry(1, 0).toNonIndexed(),
+  ico: new THREE.IcosahedronGeometry(1, 0),
+  dodeca: new THREE.DodecahedronGeometry(1, 0),
   box: new THREE.BoxGeometry(1, 1, 1).toNonIndexed(),
 };
 

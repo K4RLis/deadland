@@ -12,7 +12,7 @@ const TREE_COLORS = {
 
 // гранёные варианты примитивов: вершины смещены по хэшу позиции, поэтому меш остаётся цельным
 function jittered(geo, amt, seed) {
-  const g = geo.toNonIndexed();
+  const g = geo.index ? geo.toNonIndexed() : geo.clone();
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);

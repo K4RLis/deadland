@@ -8,7 +8,7 @@ import { ChunkRenderer } from './chunks.js';
 import { Blocks, BLOCK_TYPES, colliderBox, unpackBlock } from './blocks.js';
 import { Fx } from './fx.js';
 import { Player } from './player.js';
-import { Inventory } from './inventory.js';
+import { Inventory, HOTBAR } from './inventory.js';
 import { Weapons } from './weapons.js';
 import { ZombieSim, ZombieViews, ZTYPES, ZT } from './zombies.js';
 import { ITEMS, makeItem, rollLoot, xpNeed, QUESTS, STATION_NAMES } from './items.js';
@@ -32,6 +32,9 @@ function nextFrame() {
 }
 
 const TOOLS = new Set(['axe', 'pickaxe', 'iaxe', 'ipick']);
+
+// набор тестового мира
+const TEST_KIT = ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'iaxe', 'ipick'];
 
 export class Game {
   constructor(o) {
@@ -133,7 +136,7 @@ export class Game {
     this.skyCol = new THREE.Color();
     this._c1 = new THREE.Color(); this._c2 = new THREE.Color();
     // гранёный небесный купол: цвет каждого треугольника считается от высоты и направления на солнце
-    const dg = new THREE.IcosahedronGeometry(1000, 4).toNonIndexed();
+    const dg = new THREE.IcosahedronGeometry(1000, 4);
     dg.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(dg.attributes.position.count * 3), 3));
     this.dome = new THREE.Mesh(dg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
     this.dome.renderOrder = -10;
@@ -143,7 +146,7 @@ export class Game {
     const cb = new MeshBuilder(0.1);
     let sd = 991;
     const rnd = () => { sd = (Math.imul(sd, 1103515245) + 12345) | 0; return ((sd >>> 8) & 0xffff) / 0xffff; };
-    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 2).toNonIndexed());
+    const cloudGeo = [0, 1, 2].map(k => new THREE.IcosahedronGeometry(1, 2));
     for (let i = 0; i < 16; i++) {
       const cx = rnd() * 1200 - 600, cz = rnd() * 1200 - 600, cy = 190 + rnd() * 50;
       const n = 4 + Math.floor(rnd() * 5), size = 18 + rnd() * 22;
@@ -319,13 +322,8 @@ export class Game {
       P.spawnAt(s.x, s.y, s.z, s.yaw);
       // стартовый набор — в рюкзак, чтобы в руках были кулаки
       for (const [id, n] of [['bandage', 2], ['water', 1], ['can', 1], ['b_torch', 2]]) this.inv.addItem(makeItem(id, n), false);
-      // тестовый мир: все стволы и железные инструменты сразу на панели
-      if (this.level.test) for (const id of ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'iaxe', 'ipick']) {
-        const it = makeItem(id, 1);
-        if (ITEMS[id].cat === 'gun') it.ammo = ITEMS[id].mag;
-        this.inv.addItem(it, true);
-      }
     }
+    if (this.level.test) this.giveTestKit();
     this.lastDay = this.day;
     this.world.ensureAround(P.pos.x, P.pos.z, 1);
     this.chunks.update(P.pos.x, P.pos.z, false);
@@ -1343,16 +1341,39 @@ export class Game {
     if (this.ui.contCid === 'd' + id) this.ui.closePanel();
   }
 
+  // ---------- тестовый мир ----------
+  // все стволы и железные инструменты на панели; пропавшие (например, из старого сохранения) выдаются заново
+  giveTestKit() {
+    const inv = this.inv;
+    const missing = TEST_KIT.filter(id => inv.count(id) <= 0);
+    if (!missing.length) return;
+    // освобождаем панель под стволы: прочие вещи с неё уходят в рюкзак
+    for (let i = 0; i < HOTBAR; i++) {
+      const s = inv.slots[i];
+      if (!s || TEST_KIT.includes(s.id)) continue;
+      inv.slots[i] = null;
+      const left = inv.addItem(s, false);
+      if (left) inv.slots[i] = left;
+    }
+    for (const id of missing) {
+      const it = makeItem(id, 1);
+      if (ITEMS[id].cat === 'gun') it.ammo = ITEMS[id].mag;
+      inv.addItem(it, true);
+    }
+  }
+
   // ---------- смерть ----------
   onLocalDeath(src) {
     const P = this.player;
-    const items = this.inv.all();
-    this.inv.clear();
+    // в тестовом мире вещи остаются при игроке
+    const keep = !!this.level.test;
+    const items = keep ? [] : this.inv.all();
+    if (!keep) this.inv.clear();
     if (items.length) this.toHost({ t: 'drop', items, p: [P.pos.x, P.pos.y, P.pos.z], death: 1 });
     this.toHost({ t: 'dead' });
     this.weapons.equip(null);
     const why = { zombie: 'Вас загрызли зомби.', fall: 'Вы разбились при падении.', starve: 'Вы умерли от голода и жажды.' }[src] || 'Вы погибли.';
-    this.ui.showDeath(why + ' Ваши вещи остались в рюкзаке на месте гибели.', !!this.bedBlock());
+    this.ui.showDeath(why + (keep ? ' В тестовом мире вещи остаются при вас.' : ' Ваши вещи остались в рюкзаке на месте гибели.'), !!this.bedBlock());
   }
 
   respawn(atBed) {
@@ -1361,7 +1382,8 @@ export class Game {
     if (b) P.spawnAt(b.i * 2 + 1, b.y0 + 0.4, b.j * 2 + 1, P.yaw);
     else { const s = this.findSpawn(); P.spawnAt(s.x, s.y, s.z, s.yaw); }
     P.hp = P.maxHp; P.food = Math.max(P.food, 70); P.water = Math.max(P.water, 70); P.stamina = P.perks.stamina;
-    this.inv.add('bandage', 1); this.inv.add('water', 1);
+    if (this.level.test) this.giveTestKit();
+    else { this.inv.add('bandage', 1); this.inv.add('water', 1); }
     this.toHost({ t: 'respawn' });
     this.ui.panel = null;
   }

@@ -1,6 +1,36 @@
-// Звуки на WebAudio: почти всё синтезируется на лету, отдельные выстрелы — записанные сэмплы.
-// Положи файл assets/sfx/<id>.wav (или .mp3/.ogg) — он заменит синтезированный выстрел.
-const GUN_SOUNDS = ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper'];
+// Звуки на WebAudio: почти всё синтезируется на лету, выстрелы и урон — записанные сэмплы.
+// Записанные звуки: id → файлы в assets/sfx (несколько файлов — варианты, играются вперемешку).
+// Тишина в начале файла и слишком длинный хвост обрезаются при загрузке.
+const SAMPLE_FILES = {
+  pistol: ['pistol.wav', 'pistol_2.mp3'], smg: ['smg.wav'], shotgun: ['shotgun.wav'], rifle: ['rifle.wav'],
+  asval: ['asval.wav'], sniper: ['sniper.mp3'], hurt: ['hurt.mp3'],
+};
+const MAX_LEN = { sniper: 2.2, hurt: 1.2 };
+
+// убрать тишину перед звуком (порог 5% пика) и обрезать хвост длиннее maxLen с плавным затуханием
+function trimBuffer(ctx, buf, maxLen) {
+  const ch = buf.numberOfChannels, sr = buf.sampleRate, n = buf.length;
+  let pk = 0;
+  for (let c = 0; c < ch; c++) { const d = buf.getChannelData(c); for (let i = 0; i < n; i++) pk = Math.max(pk, Math.abs(d[i])); }
+  if (pk <= 0) return buf;
+  let on = n;
+  for (let c = 0; c < ch; c++) { const d = buf.getChannelData(c); let i = 0; while (i < on && Math.abs(d[i]) < pk * 0.05) i++; on = i; }
+  const start = Math.max(0, on - Math.round(sr * 0.002));
+  const len = Math.min(n - start, Math.round(sr * maxLen));
+  if (start === 0 && len === n) return buf;
+  const cut = start + len < n;
+  const fade = Math.max(Math.round(sr * 0.005), Math.min(Math.round(sr * 0.3), Math.round(len * 0.2)));
+  const out = ctx.createBuffer(ch, len, sr);
+  for (let c = 0; c < ch; c++) {
+    const d = buf.getChannelData(c), o = out.getChannelData(c);
+    for (let i = 0; i < len; i++) {
+      let k = i < 32 && start > 0 ? i / 32 : 1;
+      if (cut && len - i < fade) { const t = (len - i) / fade; k *= t * t; }
+      o[i] = d[start + i] * k;
+    }
+  }
+  return out;
+}
 
 export class Sfx {
   constructor() {
@@ -29,22 +59,20 @@ export class Sfx {
 
   loadSamples() {
     this.samples = {};
-    for (const k of GUN_SOUNDS) this.loadSample(k, ['wav', 'mp3', 'ogg']);
-  }
-
-  loadSample(k, exts) {
-    if (!exts.length) return;
-    fetch(`assets/sfx/${k}.${exts[0]}`)
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
-      .then(b => this.ctx.decodeAudioData(b))
-      .then(buf => { this.samples[k] = buf; })
-      .catch(() => this.loadSample(k, exts.slice(1)));
+    for (const k in SAMPLE_FILES) for (const f of SAMPLE_FILES[k]) {
+      fetch('assets/sfx/' + f)
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+        .then(b => this.ctx.decodeAudioData(b))
+        .then(buf => { (this.samples[k] ||= []).push(trimBuffer(this.ctx, buf, MAX_LEN[k] || 1.6)); })
+        .catch(e => console.warn('звук', f, e));
+    }
   }
 
   // записанный звук с позиционированием; false — сэмпла пока нет
   sample(k, pos, ref, maxD, vol = 1) {
-    const buf = this.samples && this.samples[k];
-    if (!buf) return false;
+    const list = this.samples && this.samples[k];
+    if (!list || !list.length) return false;
+    const buf = list[Math.floor(Math.random() * list.length)];
     const o = this.out(pos, ref, maxD);
     if (!o) return true;
     const src = this.ctx.createBufferSource();
@@ -148,7 +176,15 @@ export class Sfx {
   craft() { if (!this.ctx) return; const o = this.out(null); this.noiseBurst(o.node, 0.15, 1200, 400, 2, 0.25, 'bandpass'); this.tone(o.node, 'triangle', 500, 900, 0.12, 0.12, 0.1); }
   place(pos) { if (!this.ctx) return; const o = this.out(pos, 6, 40); if (o) { this.tone(o.node, 'sine', 160, 80, 0.12, 0.5 * o.k); this.noiseBurst(o.node, 0.1, 800, 200, 1, 0.25 * o.k); } }
   eat() { if (!this.ctx) return; const o = this.out(null); for (let i = 0; i < 3; i++) this.noiseBurst(o.node, 0.08, 1500, 500, 2, 0.15, 'bandpass', i * 0.18); }
-  hurt() { if (!this.ctx) return; const o = this.out(null); this.tone(o.node, 'sawtooth', 220, 110, 0.18, 0.18); this.noiseBurst(o.node, 0.15, 700, 150, 1, 0.3); }
+  hurt() {
+    if (!this.ctx) return;
+    // несколько ударов подряд (толпа зомби) не накладываются в кашу
+    const now = performance.now();
+    if (now - (this.hurtT || -1e9) < 300) return;
+    this.hurtT = now;
+    if (this.sample('hurt', null, 1, 1, 0.85)) return;
+    const o = this.out(null); this.tone(o.node, 'sawtooth', 220, 110, 0.18, 0.18); this.noiseBurst(o.node, 0.15, 700, 150, 1, 0.3);
+  }
   levelUp() { if (!this.ctx) return; const o = this.out(null); [523, 659, 784, 1046].forEach((f, i) => this.tone(o.node, 'triangle', f, f, 0.18, 0.15, i * 0.09)); }
   alarm() { if (!this.ctx) return; const o = this.out(null); for (let i = 0; i < 4; i++) { this.tone(o.node, 'sawtooth', 300, 600, 0.45, 0.12, i * 0.5); } }
 
