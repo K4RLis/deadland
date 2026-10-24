@@ -4,10 +4,12 @@ import { ITEMS, FISTS } from './items.js';
 import { itemModel, makeViewArms, makeFist } from './models.js';
 import { BLOCK_TYPES } from './blocks.js';
 
-const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.69, asval: -0.5, sniper: -0.78 };
+const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.69, asval: -0.5, sniper: -0.78, rpg: -0.6 };
 const easeOut = t => 1 - (1 - t) * (1 - t);
 const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
-const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3(), _o = new THREE.Vector3(), _e = new THREE.Vector3();
+const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3(), _o = new THREE.Vector3(), _e = new THREE.Vector3(), _s = new THREE.Vector3();
+// РПГ без гранаты — пустая труба
+const modelKey = (id, slot) => (id === 'rpg' && slot && slot.ammo <= 0 ? 'rpg_e' : id);
 
 export class Weapons {
   constructor(game) {
@@ -42,13 +44,14 @@ export class Weapons {
     this.runK = 0;
   }
 
-  equip(id) {
-    this.curId = id;
+  equip(id, mk = id) {
+    this.curId = id; this.curMk = mk; this.itemMesh = null;
     if (this.model) { this.hold.remove(this.model); }
     this.model = new THREE.Group();
     const def = id ? ITEMS[id] : null;
     if (id) {
-      const m = itemModel(id);
+      const m = itemModel(mk);
+      this.itemMesh = m;
       if (def.cat === 'block') m.scale.setScalar(1.3);
       else if (def.cat !== 'gun' && def.cat !== 'melee') { m.scale.setScalar(0.55); m.rotation.set(0.3, 0.6, 0); }
       this.model.add(m);
@@ -66,12 +69,21 @@ export class Weapons {
         this.fists.push({ g: h, side });
       }
     } else this.model.add(makeViewArms(id, def.cat, skin, sleeve));
-    if (def && def.cat === 'gun') { this.flash.position.set(0, 0.03, MUZZLE[id] ?? -0.4); this.model.add(this.flash); }
+    if (def && def.cat === 'gun') { this.flash.position.set(0, id === 'rpg' ? 0.1 : 0.03, MUZZLE[id] ?? -0.4); this.model.add(this.flash); }
     this.model.traverse(o => { o.castShadow = false; });
     this.hold.add(this.model);
     this.equipT = 0.3;
     this.reloadT = 0; this.useT = 0; this.swingT = 0; this.meleePending = null;
     this.g.blocks.hideGhost();
+  }
+
+  // та же вещь в руках, другая модель (РПГ заряжен / пуст) — без анимации доставания
+  swapModel(mk) {
+    const m = itemModel(mk);
+    m.traverse(o => { o.castShadow = false; });
+    if (this.itemMesh) this.model.remove(this.itemMesh);
+    this.model.add(m);
+    this.itemMesh = m; this.curMk = mk;
   }
 
   get def() { return this.curId ? ITEMS[this.curId] : null; }
@@ -80,7 +92,9 @@ export class Weapons {
     const g = this.g, P = g.player, inv = g.inv, inp = g.input;
     const slot = inv.slots[P.sel];
     const id = slot ? slot.id : null;
-    if (id !== this.curId) this.equip(id);
+    const mk = modelKey(id, slot);
+    if (id !== this.curId) this.equip(id, mk);
+    else if (mk !== this.curMk && this.model) this.swapModel(mk);
     const def = this.def;
     const ctl = g.ui.captured && !g.ui.typing && P.alive;
     this.cool -= dt;
@@ -190,6 +204,7 @@ export class Weapons {
     if (!g.level.infAmmo) slot.ammo--;
     this.cool = def.rate;
     this.camVectors();
+    if (def.rocket) { this.fireRocket(def); return; }
     const hs = Math.hypot(P.vel.x, P.vel.z);
     let sp = this.ads > 0.5 ? (def.adsSpread ?? def.spread * 0.35) : def.spread;
     sp *= (hs > 1 ? 1.7 : 1) * (P.crouch ? 0.7 : 1) * (P.grounded ? 1 : 2.2);
@@ -221,6 +236,34 @@ export class Weapons {
     P.yaw += (Math.random() - 0.5) * def.recoil * 0.6 * rk;
     this.recoil = 1;
     if (!hitAny) return;
+  }
+
+  // РПГ: граната летит сама (Rockets); здесь — старт из трубы на плече, вспышка, струя назад
+  fireRocket(def) {
+    const g = this.g, P = g.player;
+    let sp = this.ads > 0.5 ? def.adsSpread : def.spread;
+    sp *= (Math.hypot(P.vel.x, P.vel.z) > 1 ? 1.6 : 1) * (P.grounded ? 1 : 2);
+    const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * sp;
+    _d.copy(_f).addScaledVector(_r, Math.cos(a) * rr).addScaledVector(_u, Math.sin(a) * rr).normalize();
+    // летит туда, куда смотрит перекрестие, но выходит из трубы правее и ниже глаз
+    const h = this.trace(_o, _d, def.range);
+    const start = _e.copy(_o).addScaledVector(_f, 0.8).addScaledVector(_r, this.ads > 0.5 ? 0.05 : 0.2).addScaledVector(_u, this.ads > 0.5 ? -0.04 : -0.1);
+    const dir = new THREE.Vector3();
+    if (h.t > 4) dir.copy(_o).addScaledVector(_d, h.t).sub(start).normalize(); else dir.copy(_d);
+    // стена вплотную — граната рвётся прямо у трубы
+    _s.copy(start).sub(_o);
+    const sl = _s.length();
+    _s.divideScalar(sl);
+    const wh = g.physics.raycast(_o.x, _o.y, _o.z, _s.x, _s.y, _s.z, sl, { skip: c => c.kind === 'bush' || c.ghost });
+    if (wh) start.copy(_o).addScaledVector(_s, Math.max(0.1, wh.t - 0.15));
+    g.rockets.fire(start, dir);
+    g.fx.muzzle(start);
+    g.fx.backblast(_o.x - _f.x * 1.1, _o.y - 0.1, _o.z - _f.z * 1.1, -_f.x, -_f.z);
+    this.flash.visible = true; this.flash.rotation.z = Math.random() * 3; this.flashT = 0.08;
+    g.sfx.gun(def.sound, null);
+    P.pitch = Math.min(1.55, P.pitch + def.recoil);
+    P.shake = Math.max(P.shake, 0.45);
+    this.recoil = 1;
   }
 
   melee(def) {
@@ -394,6 +437,8 @@ export class Weapons {
     let px = 0.22, py = -0.22, pz = -0.42, rx = 0, ry = 0, rz = 0;
     if (cat === 'gun') {
       px = 0.2 * (1 - ads); py = -0.2 * (1 - ads) - 0.1 * ads; pz = -0.42 * (1 - ads) - 0.3 * ads;
+      // длинная труба РПГ — дальше от глаз, иначе раструб закрывает пол-экрана
+      if (this.curId === 'rpg') { px += 0.03 * (1 - ads); py -= 0.02 * (1 - ads); pz -= 0.26; }
     } else if (cat === 'melee') {
       px = 0.3; py = -0.3; pz = -0.48; rx = 0.25; ry = 0.15;
     } else if (cat === 'fist') {

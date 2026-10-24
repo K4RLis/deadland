@@ -157,10 +157,45 @@ export class Sfx {
     const P = {
       pistol: [0.22, 3200, 0.9, 140], smg: [0.16, 2800, 0.7, 120], rifle: [0.3, 2600, 1.0, 100],
       shotgun: [0.45, 1800, 1.2, 70], sniper: [0.6, 2200, 1.3, 60], asval: [0.12, 1600, 0.35, 90],
+      rpg: [0.5, 1500, 1.1, 55],
     }[kind] || [0.25, 2500, 1, 110];
     this.noiseBurst(o.node, P[0], P[1], 200, 0.7, P[2] * v);
     this.tone(o.node, 'sine', P[3], 40, P[0] * 0.8, 0.9 * v);
     if (pos) this.noiseBurst(o.node, P[0] * 2.5, 900, 120, 0.5, 0.15 * v, 'lowpass', 0.05);
+    // у РПГ после хлопка — шипение уходящей гранаты
+    if (kind === 'rpg') { this.noise2(o.node, 1.1, 2400, 700, 0.9, 0.32 * v, 'bandpass', 0.06); this.noise2(o.node, 0.5, 600, 120, 0.7, 0.4 * v, 'lowpass', 0); }
+  }
+
+  // взрыв: удар, раскат с затуханием верхов, треск обломков
+  explosion(pos) {
+    if (!this.ctx) return;
+    const o = this.out(pos, 45, 1100);
+    if (!o) return;
+    const v = o.k, d = pos ? Math.hypot(pos.x - this.lx, pos.y - this.ly, pos.z - this.lz) : 0;
+    const top = Math.max(500, 5200 - d * 9);
+    this.tone(o.node, 'sine', 95, 26, 1.1, 1.3 * v);
+    this.tone(o.node, 'triangle', 170, 38, 0.4, 0.55 * v);
+    this.noise2(o.node, 0.35, top, 300, 0.7, 1.4 * v, 'lowpass', 0);
+    this.noise2(o.node, 2.6, top * 0.45, 70, 0.6, 0.9 * v, 'lowpass', 0.03);
+    for (let i = 0; i < 6; i++) this.noiseBurst(o.node, 0.05, 3200, 1400, 2, 0.12 * v, 'bandpass', 0.2 + Math.random() * 0.9);
+  }
+
+  // шум любой длины (буфер шума — 2 с, дальше по кругу)
+  noise2(o, dur, f0, f1, q, vol, type, t0) {
+    const c = this.ctx, now = c.currentTime + t0;
+    const src = c.createBufferSource();
+    src.buffer = this.noise; src.loop = true;
+    const f = c.createBiquadFilter();
+    f.type = type; f.Q.value = q;
+    f.frequency.setValueAtTime(f0, now);
+    f.frequency.exponentialRampToValueAtTime(Math.max(30, f1), now + dur);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(vol, now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0008, now + dur);
+    src.connect(f); f.connect(g); g.connect(o);
+    src.start(now, Math.random() * 1.8);
+    src.stop(now + dur + 0.05);
   }
 
   dry(pos) { if (!this.ctx) return; const o = this.out(pos, 4, 30); if (o) this.tone(o.node, 'square', 1800, 900, 0.03, 0.15 * o.k); }

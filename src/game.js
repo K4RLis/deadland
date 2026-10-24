@@ -10,6 +10,7 @@ import { Fx } from './fx.js';
 import { Player } from './player.js';
 import { Inventory, HOTBAR, INV_SIZE, ARMOR_AT } from './inventory.js';
 import { Weapons } from './weapons.js';
+import { Rockets } from './rockets.js';
 import { ZombieSim, ZombieViews, ZTYPES, ZT } from './zombies.js';
 import { ITEMS, makeItem, rollLoot, xpNeed, QUESTS, STATION_NAMES } from './items.js';
 import { makePlayerModel, animate, makeNameTag, itemModel, makeBag } from './models.js';
@@ -34,7 +35,8 @@ function nextFrame() {
 const TOOLS = new Set(['axe', 'pickaxe', 'iaxe', 'ipick']);
 
 // набор тестового мира
-const TEST_KIT = ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'iaxe', 'ipick'];
+const TEST_KIT = ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'rpg', 'iaxe', 'ipick'];
+const BLAST_R = 7; // радиус поражения гранаты РПГ, м
 const TEST_ARMOR = ['helmet', 'milvest', 'kneepads'];
 
 export class Game {
@@ -69,6 +71,7 @@ export class Game {
     this.player = new Player(this);
     this.inv = new Inventory();
     this.weapons = new Weapons(this);
+    this.rockets = new Rockets(this);
     this.zviews = new ZombieViews(this);
     this.zsim = this.isHost ? new ZombieSim(this) : null;
     this.others = new Map();
@@ -347,7 +350,7 @@ export class Game {
     this.applySettings('all');
     if (this.isHost && !this.solo) this.ui.feed(`Комната открыта. Код: <b>${this.code}</b>`);
     this.ui.toast(this.level.name + ' — день ' + this.day);
-    if (this.level.test) this.ui.feed('Тестовый мир: консоль — клавиша <b>Ё</b> (<b>help</b> — команды), двойной клик по карте — телепорт');
+    this.ui.feed('Чат — <b>Enter</b>' + (this.level.test ? ', команды — через <b>/</b> в чате или в консоли (<b>Ё</b>): <b>/help</b>, <b>/tp</b>, <b>/boss</b>…; двойной клик по карте — телепорт' : ''));
   }
 
   // появление на пляже: сначала лесные берега (там безопаснее), потом пустынные; лицом к острову
@@ -394,6 +397,7 @@ export class Game {
     this.updateTime(dt);
     this.player.update(dt);
     this.weapons.update(dt);
+    this.rockets.update(dt);
     this.player.updateCamera(this.camera);
     const cp = this.camera.position;
     this.sfx.listener(cp.x, cp.y, cp.z, this.player.yaw);
@@ -629,6 +633,20 @@ export class Game {
         this.broadcastAll({ t: 'shot', pid, o: m.o, e: m.e, w: m.w }, pid);
         break;
       }
+      case 'rk': {
+        const o = m.o, v = m.v;
+        if (!Array.isArray(o) || !Array.isArray(v) || o.length !== 3 || v.length !== 3 || ![...o, ...v].every(Number.isFinite)) return;
+        this.zsim.noise(o[0], o[1], o[2], 110, pid);
+        this.broadcastAll({ t: 'rk', pid, id: String(m.id).slice(0, 40), o, v }, pid);
+        break;
+      }
+      case 'boom': {
+        const p = m.p;
+        if (!Array.isArray(p) || p.length !== 3 || !p.every(Number.isFinite)) return;
+        this.blastHost(pid, p[0], p[1], p[2], m.z | 0, clamp(+m.k || 1, 1, 2.5));
+        this.broadcastAll({ t: 'boom', pid, id: String(m.id).slice(0, 40), p }, pid);
+        break;
+      }
       case 'bPlace': {
         const T = BLOCK_TYPES[m.type];
         if (!T) return;
@@ -823,6 +841,53 @@ export class Game {
     this.broadcastAll({ t: 'bfx', k, p: [+x.toFixed(1), +y.toFixed(1), +z.toFixed(1)] });
   }
 
+  // взрыв гранаты на хосте: урон зомби, игрокам (и самому стрелку) и постройкам; укрытие гасит большую часть
+  blastHost(pid, x, y, z, zid, k) {
+    const R = BLAST_R;
+    this.zsim.noise(x, y, z, 170, pid);
+    const cover = (tx, ty, tz) => {
+      const dx = tx - x, dy = ty - y, dz = tz - z, d = Math.hypot(dx, dy, dz);
+      if (d < 0.5) return 1;
+      const h = this.physics.raycast(x, y, z, dx / d, dy / d, dz / d, d - 0.4, { skip: c => c.kind === 'bush' || c.kind === 'glass' || c.ghost });
+      return h ? 0.3 : 1;
+    };
+    for (const zb of [...this.zsim.list]) {
+      const cy = zb.pos.y + zb.height * 0.5;
+      const d = Math.max(0, Math.hypot(zb.pos.x - x, cy - y, zb.pos.z - z) - zb.radius);
+      if (d > R) continue;
+      let dmg = 380 * (1 - d / R) * (zb.id === zid ? 1 : cover(zb.pos.x, cy, zb.pos.z));
+      if (zb.id === zid) dmg += 250;
+      const dead = this.zsim.damage(zb.id, dmg * k, pid);
+      if (dead) this.killZombie(dead, pid);
+    }
+    for (const p of this.hostAlivePlayers()) {
+      const d = Math.hypot(p.x - x, p.y + 0.9 - y, p.z - z);
+      if (d > R) continue;
+      const dmg = 95 * (1 - d / R) ** 1.4 * cover(p.x, p.y + 0.9, p.z);
+      if (dmg < 1) continue;
+      if (p.pid === this.myId) this.player.damage(dmg, 'blast');
+      else if (this.net) this.net.send(p.pid, { t: 'pHit', d: Math.round(dmg), s: 'blast' });
+    }
+    const RB = R * 0.7;
+    for (const b of [...this.blocks.byKey.values()]) {
+      const d = Math.max(0, Math.hypot(b.i * 2 + 1 - x, b.y0 + 1 - y, b.j * 2 + 1 - z) - 1);
+      if (d <= RB) this.damageBlockHost(b, 300 * (1 - d / RB));
+    }
+  }
+
+  // взрыв у всех: эффекты, звук и тряска камеры по расстоянию (урон считает хост)
+  blastFx(x, y, z) {
+    const water = y < C.SEA + 0.8 && this.world.height(x, z) < C.SEA;
+    this.fx.blast(x, y, z, water);
+    this.sfx.explosion({ x, y, z });
+    const cp = this.camera.position, d = Math.hypot(cp.x - x, cp.y - y, cp.z - z);
+    this.player.shake = Math.max(this.player.shake, Math.max(0, 1 - d / 50) ** 1.5 * 1.4);
+  }
+
+  netBoom(id, p, zid) {
+    this.toHost({ t: 'boom', id, p: [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)], z: zid || 0, k: +this.player.perks.gun.toFixed(2) });
+  }
+
   zombieHitPlayer(pid, dmg) {
     if (pid === this.myId) this.player.damage(dmg, 'zombie');
     else if (this.net) this.net.send(pid, { t: 'pHit', d: Math.round(dmg) });
@@ -872,7 +937,26 @@ export class Game {
         }
         break;
       }
-      case 'pHit': this.player.damage(+m.d || 0, 'zombie'); break;
+      case 'pHit': this.player.damage(+m.d || 0, m.s === 'blast' ? 'blast' : 'zombie'); break;
+      case 'tpTo':
+        if (Array.isArray(m.p) && m.p.length === 3 && m.p.every(Number.isFinite)) {
+          const P = this.player, [x, y, z] = m.p;
+          this.world.ensureAround(x, z, 1);
+          P.pos.set(x, Math.max(y, this.world.height(x, z) + 0.1), z);
+          P.vel.set(0, 0, 0); P.landV = 0;
+          this.ui.toast('Вас телепортировал ' + String(m.by || 'хост').slice(0, 16));
+        }
+        break;
+      case 'rk':
+        if (m.pid !== this.myId && Array.isArray(m.o) && Array.isArray(m.v)) {
+          const o = new THREE.Vector3(+m.o[0], +m.o[1], +m.o[2]), v = new THREE.Vector3(+m.v[0], +m.v[1], +m.v[2]);
+          this.sfx.gun('rpg', o);
+          this.fx.muzzle(o);
+          this.fx.backblast(o.x - v.x * 1.5, o.y - 0.1, o.z - v.z * 1.5, -v.x, -v.z);
+          this.rockets.launch(m.id, o, v, false);
+        }
+        break;
+      case 'boom': if (m.pid !== this.myId && Array.isArray(m.p)) this.rockets.remote(m.id, m.p); break;
       case 'shot':
         if (m.pid !== this.myId && Array.isArray(m.o)) {
           const o = new THREE.Vector3(m.o[0], m.o[1], m.o[2]);
@@ -1355,6 +1439,13 @@ export class Game {
 
   sendChat(text) { this.toHost({ t: 'chat', text }); }
 
+  // хост притягивает игрока к себе (команды tphere / tpall)
+  adminTeleport(pid) {
+    const P = this.player, a = Math.random() * 6.283;
+    const p = [+(P.pos.x + Math.cos(a) * 1.5).toFixed(2), +(P.pos.y + 0.2).toFixed(2), +(P.pos.z + Math.sin(a) * 1.5).toFixed(2)];
+    this.sendTo(pid, { t: 'tpTo', p, by: (this.roster.get(this.myId) || {}).name || 'хост' });
+  }
+
   // ---------- лут на земле ----------
   addDropView(id, x, y, z) {
     if (this.drops.has(id)) return;
@@ -1398,6 +1489,16 @@ export class Game {
       if (ITEMS[id].cat === 'gun') it.ammo = ITEMS[id].mag;
       inv.addItem(it, true);
     }
+    // стволы — на панель: инструменты уступают место и уходят в рюкзак
+    for (let i = HOTBAR; i < INV_SIZE; i++) {
+      const s = inv.slots[i];
+      if (!s || ITEMS[s.id].cat !== 'gun') continue;
+      let j = HOTBAR - 1;
+      while (j >= 0 && inv.slots[j] && ITEMS[inv.slots[j].id].cat === 'gun') j--;
+      if (j < 0) break;
+      inv.slots[i] = inv.slots[j]; inv.slots[j] = s;
+    }
+    inv.changed();
   }
 
   // ---------- смерть ----------
@@ -1410,7 +1511,7 @@ export class Game {
     if (items.length) this.toHost({ t: 'drop', items, p: [P.pos.x, P.pos.y, P.pos.z], death: 1 });
     this.toHost({ t: 'dead' });
     this.weapons.equip(null);
-    const why = { zombie: 'Вас загрызли зомби.', fall: 'Вы разбились при падении.', starve: 'Вы умерли от голода и жажды.' }[src] || 'Вы погибли.';
+    const why = { zombie: 'Вас загрызли зомби.', fall: 'Вы разбились при падении.', starve: 'Вы умерли от голода и жажды.', blast: 'Вас разорвало взрывом.' }[src] || 'Вы погибли.';
     this.ui.showDeath(why + (keep ? ' В тестовом мире вещи остаются при вас.' : ' Ваши вещи остались в рюкзаке на месте гибели.'), !!this.bedBlock());
   }
 

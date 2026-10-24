@@ -179,6 +179,8 @@ export class MeshBuilder {
   prism(x0, y0, z0, x1, y1, z1, col, ridgeX, rows = 16) {
     const s = shade(col, 0.9);
     const R = rows;
+    // подшивка снизу — крышу видно и из-под свеса
+    this.quad(x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1, shade(col, 0.62));
     if (ridgeX) {
       const zm = (z0 + z1) / 2;
       for (let k = 0; k < R; k++) {

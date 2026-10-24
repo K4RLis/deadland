@@ -1,4 +1,5 @@
-// Консоль тестового мира (клавиша Ё): телепорт, предметы, бессмертие, полёт, зомби, время суток и прочее.
+// Команды тестового мира — в консоли (клавиша Ё) и в чате через «/»: телепорт, предметы, бессмертие, полёт,
+// зомби и боссы, время суток, игроки (притянуть, выгнать) и прочее. У команд есть русские названия.
 import * as C from './config.js';
 import { ITEMS, makeItem } from './items.js';
 import { ZTYPES } from './zombies.js';
@@ -14,6 +15,36 @@ function findItems(q) {
   const k = low(q), ids = Object.keys(ITEMS);
   const exact = ids.filter(id => low(ITEMS[id].name) === k);
   return exact.length ? exact : ids.filter(id => id.startsWith(k) || low(ITEMS[id].name).includes(k));
+}
+
+// другие игроки по имени (часть имени, без учёта регистра)
+function findPlayers(g, q) {
+  const k = low(q), out = [];
+  for (const [pid, r] of g.roster) if (pid !== g.myId && (!k || low(r.name).includes(k))) out.push({ pid, name: r.name });
+  const exact = out.filter(p => low(p.name) === k);
+  return exact.length ? exact : out;
+}
+
+function onePlayer(g, a, out) {
+  if (!a.length) { out('Укажи имя игрока. players — список.', 'err'); return null; }
+  const list = findPlayers(g, a.join(' '));
+  if (!list.length) { out(`Нет игрока «${a.join(' ')}». players — список.`, 'err'); return null; }
+  if (list.length > 1) { out('Подходит несколько: ' + list.map(p => p.name).join(', '), 'err'); return null; }
+  return list[0];
+}
+
+// зомби там, куда смотришь (или в dist м впереди); сразу идут на того, кто вызвал
+function spawnZombies(g, type, n, dist) {
+  let p = aimPoint(g, 150);
+  const P = g.player;
+  // босс в упор (смотришь в стену) — ставим его подальше впереди
+  if (p && ZTYPES[type].boss && Math.hypot(p.x - P.pos.x, p.z - P.pos.z) < 8) p = null;
+  if (!p) p = { x: P.pos.x - Math.sin(P.yaw) * dist, z: P.pos.z - Math.cos(P.yaw) * dist };
+  for (let i = 0; i < n; i++) {
+    const r = i ? (ZTYPES[type].boss ? 4 : 1.6) * Math.sqrt(i) : 0, an = i * 2.4;
+    const zb = g.zsim.spawn(type, p.x + Math.cos(an) * r, p.z + Math.sin(an) * r, {});
+    zb.state = 'chase'; zb.target = g.myId; zb.memory = 20;
+  }
 }
 
 function findZombie(q) {
@@ -57,10 +88,10 @@ function places(g) {
   return out;
 }
 
-// host — команда меняет мир, поэтому доступна только хосту
+// host — команда меняет мир или других игроков, поэтому доступна только хосту; any — работает и вне тестового мира
 export const COMMANDS = {
-  help: { args: '[команда]', desc: 'список команд' },
-  tp: { args: '[x z | место]', desc: 'телепорт: без аргументов — туда, куда смотришь; место — город, база, логово, кровать, игрок' },
+  help: { args: '[команда]', desc: 'список команд', any: true },
+  tp: { args: '[x z | место | игрок]', desc: 'телепорт: без аргументов — туда, куда смотришь; место — город, база, логово, кровать, игрок' },
   places: { desc: 'места для tp' },
   pos: { desc: 'координаты, биом, город' },
   give: { args: '<предмет> [кол-во]', desc: 'выдать предмет (id или часть названия)' },
@@ -70,6 +101,11 @@ export const COMMANDS = {
   fly: { desc: 'полёт сквозь стены: WASD, пробел — вверх, C — вниз, Shift — быстрее' },
   speed: { args: '<множитель>', desc: 'скорость бега (1 — обычная)' },
   spawn: { args: '<тип> [кол-во]', desc: 'зомби или босс там, куда смотришь', host: true },
+  boss: { args: '[тип] [кол-во]', desc: 'босс там, куда смотришь: butcher (Мясник), screamer (Крикунья), leaper (Прыгун); без типа — случайный', host: true },
+  players: { desc: 'игроки в комнате и расстояние до них', any: true },
+  tphere: { args: '<игрок>', desc: 'притянуть игрока к себе', host: true },
+  tpall: { desc: 'притянуть всех игроков к себе', host: true },
+  kick: { args: '<игрок>', desc: 'выгнать игрока из комнаты', host: true },
   killall: { desc: 'убить всех зомби', host: true },
   peace: { desc: 'новые зомби не появляются вкл/выкл', host: true },
   time: { args: '<час 0–24>', desc: 'время суток', host: true },
@@ -81,18 +117,34 @@ export const COMMANDS = {
   clear: { desc: 'очистить рюкзак (панель и броня остаются)' },
   fps: { desc: 'счётчик кадров вкл/выкл' },
   save: { desc: 'сохранить мир' },
-  cls: { desc: 'очистить консоль' },
+  cls: { desc: 'очистить консоль и чат' },
 };
+
+// русские названия команд
+const ALIAS = {
+  помощь: 'help', команды: 'help', тп: 'tp', телепорт: 'tp', места: 'places', где: 'pos', позиция: 'pos',
+  дать: 'give', выдать: 'give', предметы: 'items', лечить: 'heal', хил: 'heal', бог: 'god', бессмертие: 'god',
+  полет: 'fly', скорость: 'speed', спавн: 'spawn', зомби: 'spawn', босс: 'boss', игроки: 'players',
+  ктомне: 'tphere', сюда: 'tphere', всекомне: 'tpall', кик: 'kick', выгнать: 'kick', убитьвсех: 'killall',
+  мир: 'peace', время: 'time', день: 'day', орда: 'horde', уровень: 'level', опыт: 'xp', крафт: 'free',
+  очистить: 'clear', фпс: 'fps', сохранить: 'save',
+};
+const resolve = c => (COMMANDS[c] ? c : ALIAS[c] || c);
 
 const RUN = {
   help(g, a, out) {
-    if (a[0] && COMMANDS[a[0]]) { const c = COMMANDS[a[0]]; out(`${a[0]}${c.args ? ' ' + c.args : ''} — ${c.desc}`); return; }
-    out('Команды (Tab — дополнить, ↑↓ — история, Ё или Esc — закрыть):', 'head');
+    const ask = a[0] && resolve(low(a[0]));
+    if (ask && COMMANDS[ask]) { const c = COMMANDS[ask]; out(`${ask}${c.args ? ' ' + c.args : ''} — ${c.desc}`); return; }
+    out('Команды (в чате — с «/»: /tp, /тп; Tab — дополнить, ↑↓ — история):', 'head');
+    const ru = {};
+    for (const k in ALIAS) (ru[ALIAS[k]] ||= []).push(k);
     for (const k in COMMANDS) {
       const c = COMMANDS[k];
-      out(`  ${k}${c.args ? ' ' + c.args : ''} — ${c.desc}${c.host && !g.isHost ? ' (только у хоста)' : ''}`);
+      if (!g.level.test && !c.any) continue;
+      out(`  ${k}${ru[k] ? ' / ' + ru[k].join(' / ') : ''}${c.args ? ' ' + c.args : ''} — ${c.desc}${c.host && !g.isHost ? ' (только у хоста)' : ''}`);
     }
-    out('Двойной клик по карте (M) — телепорт в эту точку.');
+    if (g.level.test) out('Двойной клик по карте (M) — телепорт в эту точку.');
+    else out('Остальные команды работают в тестовом мире.');
   },
   tp(g, a, out) {
     if (!a.length) {
@@ -165,14 +217,45 @@ const RUN = {
   spawn(g, a, out) {
     const type = findZombie(a[0] || 'walker');
     if (!type) { out('Типы: ' + Object.keys(ZTYPES).map(k => `${k} (${ZTYPES[k].name})`).join(', '), 'err'); return; }
-    const n = clamp(parseInt(a[1], 10) || 1, 1, 30);
-    let p = aimPoint(g, 150);
-    if (!p) { const P = g.player; p = { x: P.pos.x - Math.sin(P.yaw) * 10, z: P.pos.z - Math.cos(P.yaw) * 10 }; }
-    for (let i = 0; i < n; i++) {
-      const r = i ? 1.6 * Math.sqrt(i) : 0, an = i * 2.4;
-      g.zsim.spawn(type, p.x + Math.cos(an) * r, p.z + Math.sin(an) * r, {});
-    }
+    const boss = !!ZTYPES[type].boss;
+    const n = clamp(parseInt(a[1], 10) || 1, 1, boss ? 5 : 30);
+    spawnZombies(g, type, n, boss ? 25 : 10);
+    if (boss) g.broadcastAll({ t: 'note', text: `Появился босс — «${ZTYPES[type].name}»!`, big: 1 });
     out(`${ZTYPES[type].name} ×${n}`);
+  },
+  boss(g, a, out) {
+    const bosses = Object.keys(ZTYPES).filter(k => ZTYPES[k].boss);
+    const type = a[0] ? findZombie(a[0]) : bosses[Math.floor(Math.random() * bosses.length)];
+    if (!type || !ZTYPES[type].boss) { out('Боссы: ' + bosses.map(k => `${k} (${ZTYPES[k].name})`).join(', '), 'err'); return; }
+    RUN.spawn(g, [type, a[1] || '1'], out);
+  },
+  players(g, a, out) {
+    const P = g.player.pos;
+    out(`  ${(g.roster.get(g.myId) || {}).name || 'Вы'} (вы)${g.isHost ? ' — хост' : ''}`);
+    for (const [pid, r] of g.roster) {
+      if (pid === g.myId) continue;
+      const o = g.others.get(pid);
+      out(`  ${r.name}${o ? ` — ${Math.round(Math.hypot(o.x - P.x, o.z - P.z))} м, здоровье ${o.hp}` : ''}`);
+    }
+    if (g.roster.size <= 1) out('Больше никого нет.');
+  },
+  tphere(g, a, out) {
+    const p = onePlayer(g, a, out);
+    if (!p) return;
+    g.adminTeleport(p.pid);
+    out(`${p.name} → к вам`);
+  },
+  tpall(g, a, out) {
+    let n = 0;
+    for (const pid of g.roster.keys()) if (pid !== g.myId) { g.adminTeleport(pid); n++; }
+    out(n ? `Притянуто игроков: ${n}` : 'Больше никого нет.');
+  },
+  kick(g, a, out) {
+    const p = onePlayer(g, a, out);
+    if (!p) return;
+    g.broadcastAll({ t: 'note', text: `${p.name} выгнан из комнаты` });
+    if (g.net) g.net.kick(p.pid);
+    out(`${p.name} выгнан.`);
   },
   killall(g, a, out) {
     let n = 0;
@@ -226,40 +309,42 @@ const RUN = {
   },
   fps(g, a, out) { g.ui.showFps = !g.ui.showFps; out('Счётчик кадров: ' + onOff(g.ui.showFps)); },
   save(g, a, out) { g.saveAll(true); out('Сохранено.'); },
-  cls(g) { g.ui.conClear(); },
+  cls(g) { g.ui.conClear(); g.ui.chatClear(); },
 };
 
 // выполнить строку консоли; out(text, class) — вывод
 export function runCommand(g, line, out) {
   const a = line.trim().split(/\s+/);
-  const cmd = low(a.shift() || '').replace(/^\//, '');
+  const typed = low(a.shift() || '').replace(/^\//, ''), cmd = resolve(typed);
   if (!cmd) return;
-  if (!g.level.test) { out('Консоль работает только в тестовом мире.', 'err'); return; }
   const c = COMMANDS[cmd];
-  if (!c) { out(`Нет команды «${cmd}». help — список.`, 'err'); return; }
+  if (!c) { out(`Нет команды «${typed}». help — список.`, 'err'); return; }
+  if (!g.level.test && !c.any) { out('Эта команда работает только в тестовом мире.', 'err'); return; }
   if (c.host && !g.isHost) { out('Эта команда меняет мир — она есть только у хоста.', 'err'); return; }
   try { RUN[cmd](g, a, out); } catch (e) { out('Ошибка: ' + e.message, 'err'); }
 }
 
 // подпись варианта в подсказке: у предметов и зомби — с названием
 export function describe(line, s) {
-  const cmd = low(line.replace(/^\s+/, '').split(/\s+/)[0]);
+  const cmd = resolve(low(line.replace(/^\s+/, '').split(/\s+/)[0]));
   if (cmd === 'give' && ITEMS[s]) return `${s} (${ITEMS[s].name})`;
-  if (cmd === 'spawn' && ZTYPES[s]) return `${s} (${ZTYPES[s].name})`;
+  if ((cmd === 'spawn' || cmd === 'boss') && ZTYPES[s]) return `${s} (${ZTYPES[s].name})`;
   return s;
 }
 
 // варианты дополнения для последнего слова
 export function complete(g, line) {
   const parts = line.replace(/^\s+/, '').split(/\s+/);
-  if (parts.length <= 1) { const p = low(parts[0] || ''); return Object.keys(COMMANDS).filter(k => k.startsWith(p)); }
-  const cmd = low(parts[0]), q = low(parts.slice(1).join(' '));
+  if (parts.length <= 1) { const p = low(parts[0] || ''); return [...Object.keys(COMMANDS), ...Object.keys(ALIAS)].filter(k => k.startsWith(p)); }
+  const cmd = resolve(low(parts[0])), q = low(parts.slice(1).join(' '));
   let pool = [];
   if (cmd === 'give') pool = Object.keys(ITEMS);
   else if (cmd === 'spawn') pool = Object.keys(ZTYPES);
+  else if (cmd === 'boss') pool = Object.keys(ZTYPES).filter(k => ZTYPES[k].boss);
+  else if (cmd === 'tphere' || cmd === 'kick') pool = findPlayers(g, '').map(p => p.name);
   else if (cmd === 'tp') pool = places(g).map(p => p.name);
   else if (cmd === 'help') pool = Object.keys(COMMANDS);
-  const names = s => (cmd === 'give' ? [s, ITEMS[s].name] : cmd === 'spawn' ? [s, ZTYPES[s].name] : [s]);
+  const names = s => (cmd === 'give' ? [s, ITEMS[s].name] : cmd === 'spawn' || cmd === 'boss' ? [s, ZTYPES[s].name] : [s]);
   const starts = pool.filter(s => names(s).some(n => low(n).startsWith(q)));
   const has = q ? pool.filter(s => !starts.includes(s) && names(s).some(n => low(n).includes(q))) : [];
   return [...starts, ...has].slice(0, 14);

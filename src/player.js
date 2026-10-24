@@ -16,6 +16,7 @@ export class Player {
     this.bobT = 0; this.stepDist = 0;
     this.bed = null;
     this.dmgFlash = 0;
+    this.shake = 0;
     this.kills = 0;
     this.stats = {};
     this.quest = 0;
@@ -88,6 +89,7 @@ export class Player {
     if (this.sprint) this.stamina = Math.max(0, this.stamina - 13 * dt);
     else this.stamina = Math.min(maxSt, this.stamina + (this.grounded ? 16 : 6) * dt);
     if (this.dmgFlash > 0) this.dmgFlash = Math.max(0, this.dmgFlash - dt * 1.5);
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 1.8);
 
     // шаги
     const hs = Math.hypot(this.vel.x, this.vel.z);
@@ -120,7 +122,10 @@ export class Player {
     const bob = this.grounded ? Math.sin(this.bobT * 2) * 0.035 * Math.min(1, hs / 4) : 0;
     const eye = this.alive ? this.eye : 0.4;
     cam.position.set(this.pos.x, this.pos.y + eye + bob, this.pos.z);
-    cam.rotation.set(this.pitch, this.yaw, this.alive ? 0 : 0.6, 'YXZ');
+    // тряска от взрывов и выстрела РПГ
+    const sh = this.shake * this.shake * 0.06;
+    const jx = sh ? (Math.random() - 0.5) * sh : 0, jy = sh ? (Math.random() - 0.5) * sh : 0;
+    cam.rotation.set(this.pitch + jx, this.yaw + jy, (this.alive ? 0 : 0.6) + jy * 0.5, 'YXZ');
   }
 
   look(dx, dy, sens) {
@@ -132,8 +137,8 @@ export class Player {
 
   damage(n, src, silent) {
     if (!this.alive || n <= 0 || this.god) return;
-    // часть урона от зомби забирает броня
-    if (src === 'zombie') n = this.g.armorAbsorb(n);
+    // часть урона от зомби и осколков забирает броня
+    if (src === 'zombie' || src === 'blast') n = this.g.armorAbsorb(n);
     this.hp -= n;
     if (!silent) { this.dmgFlash = Math.min(1, this.dmgFlash + n / 25); this.g.sfx.hurt(); }
     if (this.hp <= 0) { this.hp = 0; this.alive = false; this.g.onLocalDeath(src); }

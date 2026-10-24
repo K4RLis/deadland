@@ -418,8 +418,10 @@ export class ChunkRenderer {
       const bb = b.bb;
       const target = b.glass ? gb : mb;
       const tall = bb[4] - bb[1] > 1.1 && !b.glass && !b.cont && Math.min(bb[3] - bb[0], bb[5] - bb[2]) < 0.5;
-      if (tall) target.boxBanded(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), this.hi ? 0.07 : 0.14);
-      else target.box(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), true);
+      // низ нужен всему, что поднято над землёй: потолки, перекрытия, плоские крыши, перемычки над проёмами
+      const low = bb[1] <= s.y + 0.3;
+      if (tall) target.boxBanded(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), this.hi ? 0.07 : 0.14, low);
+      else target.box(bb[0], bb[1], bb[2], bb[3], bb[4], bb[5], lin(b.c), low);
       if (b.cont) {
         // тёмная «дверца» контейнера сверху, чтобы читалось как мебель
         const h = bb[4] - bb[1];

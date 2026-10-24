@@ -56,11 +56,27 @@ export class UI {
     canvas.addEventListener('click', () => { if (this.g && !this.panel) this.lock(); });
     $('click-to-play').addEventListener('click', () => this.lock());
     const ci = $('chat-input');
+    this.chatHist = []; this.chatHistI = 0;
     ci.addEventListener('keydown', e => {
       e.stopPropagation();
-      if (e.code === 'Enter') { const t = ci.value.trim(); if (t && this.g) this.g.sendChat(t); this.closeChat(); }
-      else if (e.code === 'Escape') this.closeChat();
+      if (e.code === 'Enter') {
+        const t = ci.value.trim();
+        if (t && this.g) {
+          if (this.chatHist[this.chatHist.length - 1] !== t) this.chatHist.push(t);
+          if (t[0] === '/') this.chatCommand(t); else this.g.sendChat(t);
+        }
+        this.closeChat();
+      } else if (e.code === 'Escape') this.closeChat();
+      else if (e.code === 'Tab') { e.preventDefault(); this.chatComplete(); }
+      else if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+        e.preventDefault();
+        const n = this.chatHist.length;
+        this.chatHistI = Math.max(0, Math.min(n, this.chatHistI + (e.code === 'ArrowUp' ? -1 : 1)));
+        ci.value = this.chatHist[this.chatHistI] || '';
+        this.chatHint();
+      }
     });
+    ci.addEventListener('input', () => this.chatHint());
     this.bindConsole();
     window.addEventListener('pointermove', e => this.onDragMove(e));
     window.addEventListener('pointerup', e => this.onDragEnd(e));
@@ -171,6 +187,7 @@ export class UI {
       else if (!this.panel) this.openMap();
     }
     if (pressed.has('Enter') && !this.panel && this.captured) this.openChat();
+    if (pressed.has('Slash') && !this.panel && this.captured) this.openChat('/');
     if (pressed.has('Backquote') && !this.panel) this.openConsole();
   }
 
@@ -253,11 +270,14 @@ export class UI {
   }
 
   // ---------- чат ----------
-  openChat() {
+  openChat(pre = '') {
     this.typing = true;
     $('chat').classList.add('open');
     const ci = $('chat-input');
-    ci.value = '';
+    ci.value = pre;
+    this.chatHistI = this.chatHist.length;
+    this.chatHint();
+    this.chatTrim();
     setTimeout(() => ci.focus(), 0);
   }
 
@@ -265,14 +285,62 @@ export class UI {
     this.typing = false;
     $('chat').classList.remove('open');
     $('chat-input').blur();
+    $('chat-hint').textContent = '';
+    this.chatTrim();
   }
 
   chat(name, text, color) {
     const d = document.createElement('div');
     d.innerHTML = name ? `<b style="color:${hex(color || 0xffffff)}">${esc(name)}:</b> ${esc(text)}` : `<i>${esc(text)}</i>`;
+    this.chatAdd(d);
+  }
+
+  // ответ на команду — виден только тому, кто её ввёл
+  chatSys(text, cls = '') {
+    for (const t of String(text).split('\n')) {
+      const d = document.createElement('div');
+      d.className = 'sys ' + cls;
+      d.textContent = t;
+      this.chatAdd(d);
+    }
+  }
+
+  chatAdd(d) {
     const log = $('chat-log');
     log.appendChild(d);
-    while (log.children.length > 9) log.firstChild.remove();
+    while (log.children.length > 120) log.firstChild.remove();
+    this.chatTrim();
+  }
+
+  // закрытый чат показывает только последние строки, открытый — всю историю с прокруткой
+  chatTrim() {
+    const log = $('chat-log'), n = log.children.length;
+    for (let i = 0; i < n; i++) log.children[i].classList.toggle('old', i < n - 10);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  chatClear() { $('chat-log').innerHTML = ''; }
+
+  chatCommand(t) {
+    this.chatSys('› ' + t, 'cmd');
+    runCommand(this.g, t.slice(1), (s, c) => this.chatSys(s, c));
+  }
+
+  chatHint() {
+    const v = $('chat-input').value;
+    $('chat-hint').textContent = v[0] === '/' && this.g ? complete(this.g, v.slice(1)).map(s => describe(v.slice(1), s)).join('   ') : '';
+  }
+
+  // Tab в чате дополняет команду, как в консоли
+  chatComplete() {
+    const ci = $('chat-input'), v = ci.value;
+    if (v[0] !== '/' || !this.g) return;
+    const line = v.slice(1), list = complete(this.g, line);
+    if (list.length === 1) {
+      const parts = line.replace(/^\s+/, '').split(/\s+/);
+      ci.value = '/' + (parts.length <= 1 ? list[0] : parts[0] + ' ' + list[0]) + ' ';
+    }
+    this.chatHint();
   }
 
   // ---------- сообщения ----------

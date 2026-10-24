@@ -161,9 +161,18 @@ input:focus { border-color: var(--amber); }
   linear-gradient(#000, #000) center/2px 100% no-repeat, linear-gradient(#000, #000) center/100% 2px no-repeat,
   radial-gradient(circle at center, transparent 0, transparent 37vh, #000 37.3vh); }
 #chat { position: absolute; left: 18px; bottom: 150px; width: 420px; }
-#chat-log { display: flex; flex-direction: column; gap: 2px; }
-#chat-log div { background: rgba(12, 14, 16, 0.55); padding: 2px 8px; font-size: 13px; animation: fade 14s forwards; align-self: flex-start; }
+#chat-log { max-height: 42vh; overflow: hidden; }
+#chat.open #chat-log { overflow-y: auto; pointer-events: auto; background: rgba(10, 12, 14, 0.35); }
+#chat-log div { background: rgba(12, 14, 16, 0.55); padding: 2px 8px; margin-top: 2px; font-size: 13px; animation: fade 14s forwards; width: fit-content; max-width: 100%; overflow-wrap: anywhere; }
+#chat-log div.old { display: none; }
 #chat.open #chat-log div { animation: none; opacity: 1; }
+#chat.open #chat-log div.old { display: block; }
+#chat-log .sys { color: #d6e4f0; font-size: 12.5px; }
+#chat-log .sys.cmd { color: #9aa4ac; }
+#chat-log .sys.err { color: #ff9a86; }
+#chat-log .sys.head { color: var(--amber); }
+#chat-hint { display: none; margin-top: 3px; padding: 2px 8px; font-size: 12px; color: #b8c4cc; background: rgba(10, 12, 14, 0.75); }
+#chat.open #chat-hint:not(:empty) { display: block; }
 #chat-input { width: 100%; margin-top: 4px; display: none; pointer-events: auto; background: rgba(10, 12, 14, 0.85); }
 #chat.open #chat-input { display: block; }
 #click-to-play { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); background: rgba(12, 14, 16, 0.85); padding: 14px 26px; font: 20px 'Russo One'; border: 1px solid var(--amber); }
