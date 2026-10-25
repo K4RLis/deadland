@@ -1,11 +1,13 @@
 // Предмет в руках: стрельба, ближний бой, добыча ресурсов, еда/лечение, установка блоков.
 import * as THREE from 'three';
 import { ITEMS, FISTS } from './items.js';
-import { itemModel, makeViewArms, makeFist } from './models.js';
+import { itemModel, makeViewArms, makeFist, GUN_K, gunFitY } from './models.js';
 import { BLOCK_TYPES } from './blocks.js';
 
 const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.62, qbz: -0.62, asval: -0.59, sniper: -0.78, rpg: -0.6 };
 const MUZZLE_Y = { rifle: 0.053, qbz: 0.03, asval: 0.065, rpg: 0.1 };
+// у готовых моделей (АК, QBZ, «Вал») дуло там же, где после увеличения модели
+for (const id of ['rifle', 'qbz', 'asval']) { MUZZLE[id] *= GUN_K; MUZZLE_Y[id] = gunFitY(MUZZLE_Y[id]); }
 const easeOut = t => 1 - (1 - t) * (1 - t);
 const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3(), _o = new THREE.Vector3(), _e = new THREE.Vector3(), _s = new THREE.Vector3();

@@ -1646,6 +1646,9 @@ const BUILD = {
 
 // готовые модели (assets/models): масштаб, сдвиг (прицельная линия — на 0,1 выше начала координат, как ждёт
 // прицеливание), подъём самых тёмных цветов, чтобы чёрный пластик и воронение не сливались в силуэт
+// и все они увеличены в GUN_K раз — в руках так нагляднее; прицельная линия при этом остаётся на 0,1
+export const GUN_K = 1.3;
+export const gunFitY = y => y * GUN_K - 0.1 * (GUN_K - 1);
 const GUN_FIT = {
   rifle: { s: 1, off: [0, -0.033, 0], lift: 0.006 },
   qbz: { s: 1, off: [0, -0.057, 0], lift: 0.016 },
@@ -1656,6 +1659,8 @@ function fittedGun(geo, f) {
   const g = geo.clone();
   g.scale(f.s, f.s, f.s);
   g.translate(...f.off);
+  g.scale(GUN_K, GUN_K, GUN_K);
+  g.translate(0, -0.1 * (GUN_K - 1), 0);
   const c = g.attributes.color;
   for (let i = 0; i < c.array.length; i++) c.array[i] = c.array[i] + f.lift * (1 - c.array[i]);
   g.computeBoundingSphere();
@@ -1914,6 +1919,12 @@ function palmHand(p, skin, sleeve, y) {
 
 const VM_GRIP = { pistol: [-0.008, 0.032, 0.28], smg: [-0.03, 0.04, 0.28], shotgun: [-0.004, 0.125, 0.95], rifle: [0.0, -0.01, 0.32], qbz: [-0.018, -0.026, 0.46], asval: [0.023, -0.008, 0.36], sniper: [-0.04, 0.085, 0.35], rpg: [0.044, 0.016, 0.22], rpg_e: [0.044, 0.016, 0.22] };
 const VM_SUPPORT = { smg: [-0.05, -0.17], shotgun: [-0.056, -0.33], rifle: [0.02, -0.31], qbz: [0.004, -0.27], asval: [0.042, -0.215], sniper: [-0.062, -0.22], rpg: [0.043, -0.15], rpg_e: [0.043, -0.15] };
+// точки хвата у увеличенных готовых моделей
+for (const id in GUN_FIT) {
+  const gr = VM_GRIP[id], sp = VM_SUPPORT[id];
+  VM_GRIP[id] = [gunFitY(gr[0]), gr[1] * GUN_K, gr[2]];
+  VM_SUPPORT[id] = [gunFitY(sp[0]), sp[1] * GUN_K];
+}
 const VM_HANDLE = { knife: 0.01, bat: 0.1, axe: 0.08, pickaxe: 0.08, iaxe: 0.08, ipick: 0.08, machete: 0.01, hammer: 0.07 };
 
 // руки для предмета в руках: оружие держат двумя руками, холодное — кулаком за рукоять
