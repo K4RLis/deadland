@@ -73,8 +73,13 @@ function parseHand(ab) {
 const cache = new Map(), _q = new THREE.Quaternion(), _m = new THREE.Matrix4(), _v = new THREE.Vector3(), _n = new THREE.Vector3();
 
 // поза — как у процедурной кисти: curl[палец] = [осн, сред, конц] (рад), spread; большой палец — pose.rt
+const _last = {};
+// для подбора поз: последняя поза кисти этой стороны
+export const _lastPose = side => _last[side];
+
 export function riggedHand(side, pose) {
   if (!D) return null;
+  _last[side] = pose;
   const key = side + JSON.stringify(pose);
   let geo = cache.get(key);
   if (!geo) { geo = bake(side, pose); cache.set(key, geo); }
@@ -107,6 +112,21 @@ function posedWorlds(pose) {
   return Wp;
 }
 
+// для подбора поз: к какой части кисти относится каждая вершина — 0–3 пальцы, 4 большой, 5 ладонь
+export function _groups() {
+  if (!D) return null;
+  const n = D.W.length, part = new Int8Array(n).fill(5);
+  D.FING.forEach((ch, f) => { ch.forEach(i => { part[i] = f; }); const t = D.parent.indexOf(ch[2]); if (t >= 0) part[t] = f; });
+  D.TH.forEach(i => { part[i] = 4; }); const tt = D.parent.indexOf(D.TH[2]); if (tt >= 0) part[tt] = 4;
+  const vc = D.pos.length / 3, out = new Int8Array(vc);
+  for (let v = 0; v < vc; v++) {
+    let b = 0, w = -1;
+    for (let k = 0; k < 4; k++) if (D.wgt[v * 4 + k] > w) { w = D.wgt[v * 4 + k]; b = D.skin[v * 4 + k]; }
+    out[v] = part[b];
+  }
+  return out;
+}
+
 // для подбора поз: положение суставов
 export function _joints(pose) {
   if (!D) return null;
@@ -123,6 +143,9 @@ export function _joints(pose) {
   if (tip >= 0) out.tip = new THREE.Vector3().setFromMatrixPosition(Wp[tip]).toArray();
   return out;
 }
+
+// для подбора поз: вершины кисти в позе (без кэша и без сетки)
+export function _bakePos(side, pose) { return D ? bake(side, pose).attributes.position.array : null; }
 
 function bake(side, pose) {
   const n = D.W.length, Wp = posedWorlds(pose), S = new Array(n);

@@ -10,7 +10,7 @@ const VM_K = 1.4;
 const HIP_UP = { smg: [0.04, 0.06], shotgun: [0.05, 0.08], sniper: [0.05, 0.07] };
 // маленький пистолет у самых глаз и так крупный
 const VM_KS = { pistol: 1.25 };
-const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.62, qbz: -0.62, asval: -0.59, sniper: -0.78, rpg: -0.6 };
+const MUZZLE = { pistol: -0.19, smg: -0.37, shotgun: -0.7, rifle: -0.62, qbz: -0.62, asval: -0.59, sniper: -0.78, rpg: -0.6 };
 const MUZZLE_Y = { rifle: 0.053, qbz: 0.03, asval: 0.065, rpg: 0.1 };
 // у готовых моделей (АК, QBZ, «Вал») дуло там же, где после увеличения модели
 for (const id of ['rifle', 'qbz', 'asval']) { MUZZLE[id] *= GUN_K; MUZZLE_Y[id] = gunFitY(MUZZLE_Y[id]); }
@@ -19,6 +19,8 @@ const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3(), _o = new THREE.Vector3(), _e = new THREE.Vector3(), _s = new THREE.Vector3();
 // РПГ без гранаты — пустая труба; оружие с прицелом — «rifle+scope4»
 const modelKey = (id, slot) => heldKey(id === 'rpg' && slot && slot.ammo <= 0 ? 'rpg_e' : id, slot && slot.sight);
+// прицельная линия открытого прицела, если она не на 0,1 (в системе модели до увеличения)
+const IRON_Y = { pistol: 0.058 };
 // глаз при прицеливании — на таком расстоянии от заднего края прицела (в его натуральных размерах)
 const EYE = { reddot: 0.085, scope2: 0.06, scope4: 0.06 };
 
@@ -108,9 +110,11 @@ export class Weapons {
     const [id, sight] = String(mk || '').split('+');
     this.sight = sight || null;
     this.adsY = 0.1; this.adsZ = -0.3;
-    const at = sight && sightAt(id, sight);
-    if (!at || !this.model) return;
+    if (!this.model) return;
     const k = this.model.scale.x;
+    if (IRON_Y[id] != null) this.adsY = IRON_Y[id] * k + this.model.position.y;
+    const at = sight && sightAt(id, sight);
+    if (!at) return;
     this.adsY = at.y * k + this.model.position.y;
     this.adsZ = -at.back * k - EYE[sight] * at.k * k;
   }
