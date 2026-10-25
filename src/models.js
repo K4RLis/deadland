@@ -1783,8 +1783,6 @@ const FINGERS = [
   { x: 0.027, z: -0.038, r: 0.0077, L: [0.033, 0.02, 0.018], spl: 0.12 },
 ];
 const PHAL_R = [1, 0.93, 0.86];
-// во сколько раз готовая кисть больше натуральной
-const RIG_K = 1.5;
 
 // кисть в позе pose: curl — сгиб каждого пальца по суставам [осн, сред, конц] (рад, к ладони),
 // spread — развод пальцев, thumb — { yaw: отвод, pitch: к ладони, roll: разворот ногтя, c: сгибы [пясть, осн, конц] }
@@ -1793,8 +1791,7 @@ function hand(p, side, skin, pose) {
   p.add(h);
   // готовая кисть со скелетом и текстурами, если загрузилась
   const rig = riggedHand(side, pose);
-  // готовая кисть — крупнее натуральной, в пару увеличенному оружию, иначе теряется у рукояти и цевья
-  if (rig) { h.add(rig); h.scale.setScalar(RIG_K); return h; }
+  if (rig) { h.add(rig); return h; }
   const palm = mix(skin, 0xf0c2ac, 0.14), knuckle = mix(skin, 0xc4826c, 0.14), nail = mix(skin, 0xf8e2dc, 0.62), crease = mix(skin, 0x9a5a48, 0.16);
   // ладонь: к запястью уже и тоньше; невысокие подушки под пальцами, у большого пальца и у мизинца
   blob(h, 0.082, 0.027, 0.094, skin, 0, 0, 0, { k: 0.6, tx: 0.8, ty: 0.88 });
@@ -1847,8 +1844,8 @@ function forearm(p, skin, sleeve, x, y, z, rx, ry) {
   const cuff = dk(sleeve, 0.78), fold = dk(sleeve, 0.86);
   // у готовой кисти своё запястье — манжета рукава надевается прямо на его срез
   const rig = rigReady(), o = rig ? -0.062 : 0;
-  // у тонкого запястья готовой кисти рукав уже
-  if (rig) a.scale.set(1.2, 1.2, 1);
+  // у тонкого запястья готовой кисти рукав уже — облегает руку и не заслоняет кисть
+  if (rig) a.scale.set(0.7, 0.7, 1);
   if (!rig) {
     blob(a, 0.06, 0.03, 0.07, skin, 0, 0, 0.01, { k: 0.8, tx: 0.92 });
     const fa = new THREE.Mesh(coneGeo(0.0245, 0.033, 0.12), M(skin));
@@ -1880,35 +1877,37 @@ function forearm(p, skin, sleeve, x, y, z, rx, ry) {
 
 // правая кисть на пистолетной рукояти (рамка наклонена вместе с рукоятью):
 // ладонь справа и сзади рукояти, пальцы обхватывают переднюю грань, указательный — у спуска, большой — слева на рамке
-function gripHand(p, skin, sleeve, y, z, rake) {
+function gripHand(p, skin, sleeve, y, z, rake, k = 1) {
   const G = sub(p, 0, y, z, -rake);
+  G.scale.setScalar(k);
   const h = hand(G, 1, skin, {
     curl: [[0.55, 0.85, 0.35], [1.45, 1.3, 0.55], [1.5, 1.3, 0.55], [1.5, 1.25, 0.5]], spread: 0.25,
     thumb: { yaw: 0.85, pitch: 0.55, roll: 1.25, c: [0.25, 0.35, 0.15] },
     rt: { swing: -0.1, twist: -1.1, flex: [-0.1, 0.55, 0.45] },
   });
-  h.position.set(0.033, -0.05, 0.016);
+  if (rigReady()) h.position.set(0.028, -0.042, -0.014);
+  else h.position.set(0.033, -0.05, 0.016);
   basis(h, [0, -1, 0], [1, 0, 0], [0, 0, 1]);
   const w = wristOf(h);
   forearm(G, skin, sleeve, w.x, w.y, w.z, 0.35 + rake, 0.22);
 }
 
 // левая кисть под цевьём: ладонь снизу-слева, пальцы обхватывают правую сторону, большой палец вдоль левой
-function supportHand(p, skin, sleeve, y, z) {
+function supportHand(p, skin, sleeve, y, z, k = 1) {
   const S = sub(p, 0, y, z);
+  S.scale.setScalar(k);
   const h = hand(S, -1, skin, {
     curl: [[1.0, 0.75, 0.4], [1.05, 0.8, 0.4], [1.1, 0.8, 0.4], [1.15, 0.8, 0.4]], spread: 0.2,
     thumb: { yaw: 0.35, pitch: 0.05, roll: 1.0, c: [0, 0.15, 0.1] },
     rt: { swing: 0.05, twist: -0.4, flex: [0.05, 0.25, 0.2] },
   });
   if (rigReady()) {
-    // готовая кисть: ладонь снизу, пальцы вперёд-вправо и обхватывают правый бок, большой палец вдоль левого —
-    // так её видно сверху-слева, где глаз; запястье уходит назад-влево
-    h.position.set(-0.03, -0.03, 0.0);
-    basis(h, [-0.8, 0, -0.6], [0, -1, 0], [-0.6, 0, 0.8]);
+    // готовая кисть: ладонь под нижним левым углом цевья, пальцы вправо-вперёд-вверх обхватывают правый бок,
+    // большой палец вдоль левого — его и видно от глаза; запястье согнуто, предплечье уходит вниз-влево
+    h.position.set(-0.0104, -0.0021, -0.0067);
+    basis(h, [-0.64, 0.414, -0.647], [-0.035, -0.857, -0.514], [-0.767, -0.307, 0.563]);
     const w = wristOf(h);
-    // предплечье круто вниз, в левый нижний угол — не заслоняет кисть
-    forearm(S, skin, sleeve, w.x, w.y, w.z, 1.05, -0.45);
+    forearm(S, skin, sleeve, w.x, w.y, w.z, 1.0, -0.5);
     return;
   }
   h.position.set(-0.018, -0.012, 0.004);
@@ -1919,8 +1918,9 @@ function supportHand(p, skin, sleeve, y, z) {
 }
 
 // кулак вокруг рукояти, идущей вдоль z: тыльная сторона справа, пальцы снизу, большой палец сверху
-function fistOnHandle(p, skin, sleeve, z) {
+function fistOnHandle(p, skin, sleeve, z, k = 1) {
   const Hd = sub(p, 0, 0, z);
+  Hd.scale.setScalar(k);
   const h = hand(Hd, 1, skin, {
     curl: [[1.35, 1.45, 0.75], [1.4, 1.5, 0.75], [1.45, 1.5, 0.75], [1.5, 1.45, 0.7]], spread: 0.15,
     thumb: { yaw: 0.6, pitch: 0.75, roll: 1.2, c: [0.3, 0.45, 0.3] },
@@ -1971,11 +1971,13 @@ export function makeViewArms(id, cat, skin, sleeve) {
   const g = new THREE.Group();
   if (rigReady()) skin = RIG_SKIN;
   if (cat === 'gun') {
-    const [y, z, rake] = VM_GRIP[id] || VM_GRIP.rifle;
-    gripHand(g, skin, sleeve, y, z, rake);
+    // у готовых моделей ствол увеличен в GUN_K раз — руки вокруг хвата во столько же
+    // у старых моделей готовая кисть тоже крупнее натуральной — иначе теряется на рукояти
+    const [y, z, rake] = VM_GRIP[id] || VM_GRIP.rifle, k = !rigReady() ? 1 : FITTED_GUNS.has(id) ? GUN_K : 1.35;
+    gripHand(g, skin, sleeve, y, z, rake, k);
     const sp = VM_SUPPORT[id];
-    if (sp) supportHand(g, skin, sleeve, sp[0], sp[1]);
-  } else if (cat === 'melee') fistOnHandle(g, skin, sleeve, VM_HANDLE[id] ?? 0.03);
+    if (sp) supportHand(g, skin, sleeve, sp[0], sp[1], k);
+  } else if (cat === 'melee') fistOnHandle(g, skin, sleeve, VM_HANDLE[id] ?? 0.03, rigReady() ? 1.25 : 1);
   else palmHand(g, skin, sleeve, cat === 'block' ? -0.15 : -0.065);
   return fromBaked(bakeParts(g, 0, 'skin'));
 }

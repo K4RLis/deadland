@@ -1,9 +1,15 @@
 // Предмет в руках: стрельба, ближний бой, добыча ресурсов, еда/лечение, установка блоков.
 import * as THREE from 'three';
 import { ITEMS, FISTS } from './items.js';
-import { itemModel, makeViewArms, makeFist, GUN_K, gunFitY } from './models.js';
+import { itemModel, makeViewArms, makeFist, GUN_K, gunFitY, FITTED_GUNS } from './models.js';
 import { BLOCK_TYPES } from './blocks.js';
 
+// во сколько раз всё, что держат в руках (кроме готовых моделей), крупнее натуральной величины
+const VM_K = 1.4;
+// подъём от бедра [м, наклон ствола вверх] для оружия, у которого руки далеко под прицелом
+const HIP_UP = { smg: [0.04, 0.06], shotgun: [0.05, 0.08], sniper: [0.05, 0.07] };
+// маленький пистолет у самых глаз и так крупный
+const VM_KS = { pistol: 1.25 };
 const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.62, qbz: -0.62, asval: -0.59, sniper: -0.78, rpg: -0.6 };
 const MUZZLE_Y = { rifle: 0.053, qbz: 0.03, asval: 0.065, rpg: 0.1 };
 // у готовых моделей (АК, QBZ, «Вал») дуло там же, где после увеличения модели
@@ -67,12 +73,15 @@ export class Weapons {
       this.fists = [];
       for (const side of [1, -1]) {
         const h = makeFist(side, skin, sleeve);
-        h.scale.setScalar(0.85);
+        h.scale.setScalar(1.3);
         this.model.add(h);
         this.fists.push({ g: h, side });
       }
     } else this.model.add(makeViewArms(id, def.cat, skin, sleeve));
     if (def && def.cat === 'gun') { this.flash.position.set(0, MUZZLE_Y[id] ?? 0.03, MUZZLE[id] ?? -0.4); this.model.add(this.flash); }
+    // готовые модели уже увеличены вместе с руками; остальное в руках — крупнее натуральной величины целиком,
+    // со смещением вниз, чтобы прицельная линия осталась около 0,1
+    if (def && !FITTED_GUNS.has(id) && def.cat !== 'block') { const k = VM_KS[id] || VM_K; this.model.scale.setScalar(k); this.model.position.y = -(k - 1) * 0.08; }
     this.model.traverse(o => { o.castShadow = false; });
     this.hold.add(this.model);
     this.equipT = 0.3;
@@ -443,13 +452,19 @@ export class Weapons {
       // длинная труба РПГ — дальше от глаз, иначе раструб закрывает пол-экрана
       if (this.curId === 'rpg') { px += 0.03 * (1 - ads); py -= 0.02 * (1 - ads); pz -= 0.26; }
       // пистолет маленький — держим выше и ближе к центру, чтобы была видна кисть на рукояти
-      if (this.curId === 'pistol') { const k = 1 - ads; px -= 0.07 * k; py += 0.1 * k; pz += 0.08 * k; rx += 0.08 * k; ry += 0.08 * k; }
+      if (this.curId === 'pistol') { const k = 1 - ads; px -= 0.08 * k; py += 0.15 * k; pz += 0.02 * k; rx += 0.05 * k; ry += 0.1 * k; }
+      // длинное оружие от бедра чуть развёрнуто стволом к центру — видно левый бок и кисть на цевье
+      else ry += 0.12 * (1 - ads);
+      // у старых моделей цевьё и рукоять ниже прицельной линии — от бедра их поднимаем, иначе руки за краем экрана
+      const hy = HIP_UP[this.curId];
+      if (hy) { const k = 1 - ads; py += hy[0] * k; rx += hy[1] * k; }
     } else if (cat === 'melee') {
-      px = 0.2; py = -0.24; pz = -0.56; rx = 0.25; ry = 0.15;
+      // кулак на рукояти выше — его видно у нижнего края
+      px = 0.2; py = -0.13; pz = -0.5; rx = 0.15; ry = 0.15;
     } else if (cat === 'fist') {
       px = 0.2; py = -0.26; pz = -0.4;
     } else if (cat === 'block') { px = 0.28; py = -0.28; pz = -0.5; ry = 0.6; }
-    else { px = 0.26; py = -0.25; pz = -0.5; }
+    else { px = 0.24; py = -0.16; pz = -0.48; }
     const bob = 1 - ads * 0.9;
     px += Math.sin(this.bobT) * 0.012 * bob;
     py += Math.abs(Math.cos(this.bobT)) * 0.012 * bob;
