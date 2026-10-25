@@ -1783,6 +1783,8 @@ const FINGERS = [
   { x: 0.027, z: -0.038, r: 0.0077, L: [0.033, 0.02, 0.018], spl: 0.12 },
 ];
 const PHAL_R = [1, 0.93, 0.86];
+// во сколько раз готовая кисть больше натуральной
+const RIG_K = 1.5;
 
 // кисть в позе pose: curl — сгиб каждого пальца по суставам [осн, сред, конц] (рад, к ладони),
 // spread — развод пальцев, thumb — { yaw: отвод, pitch: к ладони, roll: разворот ногтя, c: сгибы [пясть, осн, конц] }
@@ -1791,7 +1793,8 @@ function hand(p, side, skin, pose) {
   p.add(h);
   // готовая кисть со скелетом и текстурами, если загрузилась
   const rig = riggedHand(side, pose);
-  if (rig) { h.add(rig); return h; }
+  // готовая кисть — крупнее натуральной, в пару увеличенному оружию, иначе теряется у рукояти и цевья
+  if (rig) { h.add(rig); h.scale.setScalar(RIG_K); return h; }
   const palm = mix(skin, 0xf0c2ac, 0.14), knuckle = mix(skin, 0xc4826c, 0.14), nail = mix(skin, 0xf8e2dc, 0.62), crease = mix(skin, 0x9a5a48, 0.16);
   // ладонь: к запястью уже и тоньше; невысокие подушки под пальцами, у большого пальца и у мизинца
   blob(h, 0.082, 0.027, 0.094, skin, 0, 0, 0, { k: 0.6, tx: 0.8, ty: 0.88 });
@@ -1845,7 +1848,7 @@ function forearm(p, skin, sleeve, x, y, z, rx, ry) {
   // у готовой кисти своё запястье — манжета рукава надевается прямо на его срез
   const rig = rigReady(), o = rig ? -0.062 : 0;
   // у тонкого запястья готовой кисти рукав уже
-  if (rig) a.scale.set(0.86, 0.86, 1);
+  if (rig) a.scale.set(1.2, 1.2, 1);
   if (!rig) {
     blob(a, 0.06, 0.03, 0.07, skin, 0, 0, 0.01, { k: 0.8, tx: 0.92 });
     const fa = new THREE.Mesh(coneGeo(0.0245, 0.033, 0.12), M(skin));
@@ -1898,6 +1901,16 @@ function supportHand(p, skin, sleeve, y, z) {
     thumb: { yaw: 0.35, pitch: 0.05, roll: 1.0, c: [0, 0.15, 0.1] },
     rt: { swing: 0.05, twist: -0.4, flex: [0.05, 0.25, 0.2] },
   });
+  if (rigReady()) {
+    // готовая кисть: ладонь снизу, пальцы вперёд-вправо и обхватывают правый бок, большой палец вдоль левого —
+    // так её видно сверху-слева, где глаз; запястье уходит назад-влево
+    h.position.set(-0.03, -0.03, 0.0);
+    basis(h, [-0.8, 0, -0.6], [0, -1, 0], [-0.6, 0, 0.8]);
+    const w = wristOf(h);
+    // предплечье круто вниз, в левый нижний угол — не заслоняет кисть
+    forearm(S, skin, sleeve, w.x, w.y, w.z, 1.05, -0.45);
+    return;
+  }
   h.position.set(-0.018, -0.012, 0.004);
   basis(h, [0, 0, -1], [0, -1, 0], [-1, 0, 0]);
   h.rotateZ(-0.35);
@@ -1913,6 +1926,15 @@ function fistOnHandle(p, skin, sleeve, z) {
     thumb: { yaw: 0.6, pitch: 0.75, roll: 1.2, c: [0.3, 0.45, 0.3] },
     rt: { swing: -0.15, twist: -1.3, flex: [-0.15, 0.85, 1.1] },
   });
+  if (rigReady()) {
+    // готовая кисть: рукоять наискось через ладонь, тыльная сторона к глазу (влево), запястье вниз-назад —
+    // рукав уходит вниз и не заслоняет кулак
+    h.position.set(-0.034, -0.01, 0.006);
+    basis(h, [0, 0.8, 0.6], [-1, 0, 0], [0, -0.6, 0.8]);
+    const w = wristOf(h);
+    forearm(Hd, skin, sleeve, w.x, w.y, w.z, 0.95, -0.15);
+    return;
+  }
   h.position.set(0.03, 0.006, 0);
   basis(h, [0, 0, 1], [1, 0, 0], [0, 1, 0]);
   h.rotateX(0.5);
@@ -1967,7 +1989,7 @@ export function makeFist(side, skin, sleeve) {
     thumb: { yaw: 0.15, pitch: 0.55, roll: 1.35, c: [0.25, 0.95, 0.7] },
     rt: { swing: -0.18, twist: -1.42, flex: [-0.2, 1, 1.44] },
   });
-  h.scale.setScalar(1.15);
+  h.scale.multiplyScalar(1.15);
   // сжатая кисть ниже раскрытой — поднимаем, чтобы в стойке кулаки были видны целиком
   h.position.set(0, 0.055, 0.01);
   h.rotation.set(0.18, 0, 0);
