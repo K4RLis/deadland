@@ -4,7 +4,8 @@ import { ITEMS, FISTS } from './items.js';
 import { itemModel, makeViewArms, makeFist } from './models.js';
 import { BLOCK_TYPES } from './blocks.js';
 
-const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.69, asval: -0.5, sniper: -0.78, rpg: -0.6 };
+const MUZZLE = { pistol: -0.2, smg: -0.37, shotgun: -0.7, rifle: -0.62, qbz: -0.62, asval: -0.59, sniper: -0.78, rpg: -0.6 };
+const MUZZLE_Y = { rifle: 0.053, qbz: 0.03, asval: 0.065, rpg: 0.1 };
 const easeOut = t => 1 - (1 - t) * (1 - t);
 const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3(), _o = new THREE.Vector3(), _e = new THREE.Vector3(), _s = new THREE.Vector3();
@@ -69,7 +70,7 @@ export class Weapons {
         this.fists.push({ g: h, side });
       }
     } else this.model.add(makeViewArms(id, def.cat, skin, sleeve));
-    if (def && def.cat === 'gun') { this.flash.position.set(0, id === 'rpg' ? 0.1 : 0.03, MUZZLE[id] ?? -0.4); this.model.add(this.flash); }
+    if (def && def.cat === 'gun') { this.flash.position.set(0, MUZZLE_Y[id] ?? 0.03, MUZZLE[id] ?? -0.4); this.model.add(this.flash); }
     this.model.traverse(o => { o.castShadow = false; });
     this.hold.add(this.model);
     this.equipT = 0.3;

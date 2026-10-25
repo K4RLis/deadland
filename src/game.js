@@ -35,7 +35,7 @@ function nextFrame() {
 const TOOLS = new Set(['axe', 'pickaxe', 'iaxe', 'ipick']);
 
 // набор тестового мира
-const TEST_KIT = ['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'rpg', 'iaxe', 'ipick'];
+const TEST_KIT = ['pistol', 'smg', 'shotgun', 'rifle', 'qbz', 'asval', 'sniper', 'rpg', 'iaxe', 'ipick'];
 const BLAST_R = 7; // радиус поражения гранаты РПГ, м
 const TEST_ARMOR = ['helmet', 'milvest', 'kneepads'];
 

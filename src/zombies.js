@@ -596,7 +596,9 @@ export class ZombieViews {
       if (v.far !== far) { v.far = far; setLod(v.mesh, far); }
       if (v.st === 3) v.atk = (v.atk + dt / Math.max(0.7, v.T.rate)) % 1; else v.atk = 0; // один замах — один удар
       v.hitT = Math.max(0, (v.hitT || 0) - dt * 4);
-      if (v.mesh.visible && d < 90) animate(v.mesh, dt, sp, { atk: v.st === 3 ? v.atk : -1, hit: v.hitT });
+      // гонится и близко — тянет руки вперёд, иначе они свисают
+      v.reach = (v.reach || 0) + (((v.st === 2 && d < 7) ? 1 : 0) - (v.reach || 0)) * Math.min(1, dt * 3);
+      if (v.mesh.visible && d < 90) animate(v.mesh, dt, sp, { atk: v.st === 3 ? v.atk : -1, hit: v.hitT, reach: v.reach });
       v.groanT -= dt;
       if (v.groanT <= 0) {
         v.groanT = 4 + Math.random() * 9;

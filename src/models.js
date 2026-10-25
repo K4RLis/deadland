@@ -3,6 +3,8 @@
 // они сливаются в один меш с цветами вершин, поэтому подробность почти не стоит draw calls.
 import * as THREE from 'three';
 import { MeshBuilder, lin } from './mesh.js';
+import { gunGeo } from './gunmodels.js';
+import { characterMaterial } from './textures.js';
 
 const matCache = new Map();
 export function M(hex, emissive = 0) {
@@ -219,17 +221,36 @@ export function bake(g, facet) { return fromBaked(bakeParts(g, facet)); }
 // Для дальних персонажей строится упрощённая копия: без мелочи и без скосов.
 const limbCache = new Map();
 
-function limbGeo(parts, glow, lite) {
-  const key = (glow ? 'g' : '') + (lite ? 'l' : '') + JSON.stringify(parts);
+// материал детали для текстур персонажа: кожа (1) — по цветности, близкой к цвету кожи; кровь, раны, кость, ремни,
+// пуговицы (2); остальное — ткань (0)
+const OTHER_HEX = new Set([0x5a1212, 0x8a2420, 0xd8cfb4, 0x2a2622, 0xcfc6a6, 0xd8d2c0, 0xc8a040, 0x8a8e92, 0xe8e8e0]);
+function partKind(hex, skin) {
+  const c = h => { const r = (h >> 16) & 255, g = (h >> 8) & 255, b = h & 255, s = r + g + b || 1; return [r / s, g / s, b / s, s]; };
+  const a = c(hex), k = c(skin);
+  if (a[3] > 80 && Math.hypot(a[0] - k[0], a[1] - k[1], a[2] - k[2]) < 0.03) return 1;
+  return OTHER_HEX.has(hex) ? 2 : 0;
+}
+
+// детали: [w, h, d, цвет, x, y, z, o] — без o бокс, с o — скруглённый бокс (MeshBuilder.rbox),
+// o.s = 'e' — эллипсоид, o.s = 't' — трубка до точки o.to (w, d — диаметры начала и конца, h — длина).
+// skin — цвет кожи персонажа: вершины получают метку материала (o.kind или по цвету)
+function limbGeo(parts, glow, lite, skin = null) {
+  const tag = skin != null && !glow;
+  const key = (glow ? 'g' : '') + (lite ? 'l' : '') + (tag ? 's' + skin : '') + JSON.stringify(parts);
   let geo = limbCache.get(key);
   if (!geo) {
-    const mb = new MeshBuilder(glow ? 0 : 0.07);
+    const mb = new MeshBuilder(glow ? 0 : 0.07, false, tag);
     for (const [w, h, d, hex, x, y, z, o] of parts) {
       const sz = Math.max(w, h, d);
       if (lite && sz < 0.09) continue;
-      const dens = sz < 0.05 ? { q: 4, a: 3 } : sz < 0.1 ? { q: 6, a: 4 } : null;
-      if (o) mb.rbox(x, y, z, w, h, d, lin(hex), lite ? { ...o, c: 0, b: 0 } : dens ? { ...o, ...dens } : o);
-      else mb.box(x - w / 2, y - h / 2, z - d / 2, x + w / 2, y + h / 2, z + d / 2, lin(hex));
+      if (tag) mb.tag = o && o.kind != null ? o.kind : partKind(hex, skin);
+      const col = lin(hex), sh = o && o.s;
+      if (sh === 'e') mb.ellip(x, y, z, w, h, d, col, lite ? { ...o, q: 8, a: 5 } : sz < 0.05 ? { q: 10, a: 7, ...o } : o);
+      else if (sh === 't') mb.tube([x, y, z], o.to, w / 2, d / 2, col, lite ? { ...o, q: 6, n: 2, c: 1 } : o);
+      else if (o) {
+        const dens = sz < 0.05 ? { q: 4, a: 3 } : sz < 0.1 ? { q: 6, a: 4 } : null;
+        mb.rbox(x, y, z, w, h, d, col, lite ? { ...o, c: 0, b: 0 } : dens ? { ...o, ...dens } : o);
+      } else mb.box(x - w / 2, y - h / 2, z - d / 2, x + w / 2, y + h / 2, z + d / 2, col);
     }
     geo = mb.build();
     geo.userData.shared = true;
@@ -238,11 +259,17 @@ function limbGeo(parts, glow, lite) {
   return geo;
 }
 
-function limb(parent, parts, glow = false) {
-  const geo = limbGeo(parts, glow, false);
-  const m = new THREE.Mesh(geo, glow ? VC_GLOW : VC_MAT);
+// материалы персонажей с текстурами кожи и ткани (у зомби — грязь, вены, кровь)
+const charMats = {};
+function charMat(zombie) { return charMats[zombie] ||= characterMaterial(zombie); }
+
+// ch — { mat, skin }: материал персонажа и цвет кожи (для меток материала); без него — простой материал
+function limb(parent, parts, glow = false, ch = null) {
+  const skin = ch ? ch.skin : null;
+  const geo = limbGeo(parts, glow, false, skin);
+  const m = new THREE.Mesh(geo, glow ? VC_GLOW : ch ? ch.mat : VC_MAT);
   m.castShadow = !glow;
-  if (!glow) m.userData.lod = [geo, limbGeo(parts, false, true)];
+  if (!glow) m.userData.lod = [geo, limbGeo(parts, false, true, skin)];
   parent.add(m);
   return m;
 }
@@ -275,6 +302,8 @@ export function makeHumanoid(o) {
   const zv = o.zombie ? (o.variant ?? Math.floor(Math.random() * 4)) : -1;
   const skin = o.skin, sk2 = dk(skin, 0.9), shirt = o.shirt, pants = o.pants, shoes = o.shoes || 0x2a2420;
   const sleeve = o.sleeve ?? shirt;
+  const ch = { mat: charMat(!!o.zombie), skin };
+  const lb = (p, parts, glow = false) => limb(p, parts, glow, ch);
 
   // суставы
   const hips = new THREE.Group(); hips.position.y = PELVIS; body.add(hips);
@@ -296,25 +325,25 @@ export function makeHumanoid(o) {
   // раскладка деталей по сегментам
   const addTorso = parts => {
     const lo = parts.filter(p => p[5] <= SPINE), hi = parts.filter(p => p[5] > SPINE);
-    if (lo.length) limb(hips, lo.map(p => shift(p, -PELVIS)));
-    if (hi.length) limb(spine, hi.map(p => shift(p, -SPINE)));
+    if (lo.length) lb(hips, lo.map(p => shift(p, -PELVIS)));
+    if (hi.length) lb(spine, hi.map(p => shift(p, -SPINE)));
   };
   const addLeg = (leg, knee, parts) => {
     const up = parts.filter(p => p[5] > -KNEE + 0.01), dn = parts.filter(p => p[5] <= -KNEE + 0.01);
-    if (up.length) limb(leg, up);
-    if (dn.length) limb(knee, dn.map(p => shift(p, KNEE)));
+    if (up.length) lb(leg, up);
+    if (dn.length) lb(knee, dn.map(p => shift(p, KNEE)));
   };
   const addArm = (arm, elbow, parts) => {
     const up = parts.filter(p => p[5] > -ELBOW), dn = parts.filter(p => p[5] <= -ELBOW);
-    if (up.length) limb(arm, up);
-    if (dn.length) limb(elbow, dn.map(p => shift(p, ELBOW)));
+    if (up.length) lb(arm, up);
+    if (dn.length) lb(elbow, dn.map(p => shift(p, ELBOW)));
   };
   // к челюсти — мелкие детали ниже скул (рот, нижние зубы, борода); крупные (волосы) остаются на черепе
   const addHead = parts => {
     const isJaw = p => p[5] < 0.08 && p[1] <= 0.15 && Math.abs(p[4]) < 0.16;
     const sk = parts.filter(p => !isJaw(p)), jw = parts.filter(isJaw);
-    if (sk.length) limb(head, sk);
-    if (jw.length) limb(jaw, jw.map(p => shift(p, -JAW_Y, -JAW_Z)));
+    if (sk.length) lb(head, sk);
+    if (jw.length) lb(jaw, jw.map(p => shift(p, -JAW_Y, -JAW_Z)));
   };
 
   // ноги: бедро, колено, голень, ботинок со шнуровкой, накладные карманы
@@ -429,7 +458,7 @@ export function makeHumanoid(o) {
       strips.push([0.07, len, 0.016, dk(shirt, 0.9), x * W, 0.97 - len / 2, fz + 0.004, R(0.2)]);
       strips.push([0.08, len * 0.8, 0.016, dk(shirt, 0.85), (x + 0.03) * W, 0.97 - len * 0.4, bz - 0.004 + (i & 1) * 0.002, R(0.2)]);
     });
-    limb(spine, strips.map(p => shift(p, -SPINE)));
+    lb(spine, strips.map(p => shift(p, -SPINE)));
   }
 
   // голова: череп, челюсть, нос, уши, брови, глаза, рот, причёска / шлем
@@ -494,7 +523,7 @@ export function makeHumanoid(o) {
       [0.05, 0.03, 0.36, 0xf0c838, 0, 0.44, 0, R(0.3)],
     );
   }
-  if (glowEyes.length) limb(head, glowEyes, true);
+  if (glowEyes.length) lb(head, glowEyes, true);
   addHead(hb);
 
   // руки: плечо, плечевая часть, локоть, предплечье, манжета, ладонь, четыре пальца, большой палец
@@ -539,6 +568,244 @@ export function makeHumanoid(o) {
     tilt: o.zombie ? (Math.random() - 0.5) * 0.5 : 0,
     seed: Math.random() * 6,
     addTorso, addHead, addArm,
+  };
+  return g;
+}
+
+
+// ---------- зомби ----------
+// Тело из гладких органических деталей на том же скелете, что у людей (анимации общие): эллипсоиды
+// и сужающиеся трубки с мышцами. Пропорции настоящего человека, череп с впалыми глазницами и провалом
+// носа, отвисшая челюсть с зубами, кисти со скрюченными пальцами, рваная одежда, раны, рёбра.
+// Каждая деталь помечена: ткань (0), кожа (1), прочее (2) — шейдер накладывает текстуры кожи и ткани.
+const TEETH = 0xcfc4a0, MOUTH = 0x1c0606, GUM = 0x5a1818;
+const Ee = (w, h, d, hex, x, y, z, o = {}) => [w, h, d, hex, x, y, z, { s: 'e', ...o }];
+const Tb = (a, b, ra, rb, hex, o = {}) => [ra * 2, Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]), rb * 2, hex, a[0], a[1], a[2], { s: 't', to: b, ...o }];
+const SKINK = { kind: 1 }, CLOTHK = { kind: 0 }, OTHERK = { kind: 2 };
+
+// кисть зомби в системе локтя: ладонь к телу, пальцы из двух фаланг скрючены к ладони
+function zHand(side, skin, nail, wy) {
+  const P = [], sk2 = dk(skin, 0.9);
+  P.push(Ee(0.032, 0.088, 0.074, skin, -side * 0.002, wy - 0.045, -0.004, { k: 0.8, ...SKINK }));
+  P.push(Ee(0.046, 0.04, 0.062, skin, 0, wy + 0.004, 0, { ...SKINK }));
+  [[-0.027, 1], [-0.009, 1.08], [0.009, 1.0], [0.026, 0.82]].forEach(([z, k], i) => {
+    const c1 = 0.55 + i * 0.06, c2 = 0.85, l1 = 0.042 * k, l2 = 0.034 * k, r = 0.0088 * (k > 0.9 ? 1 : 0.88);
+    const a = [-side * 0.004, wy - 0.088, z], b = [a[0] - side * Math.sin(c1) * l1, a[1] - Math.cos(c1) * l1, z];
+    const c = [b[0] - side * Math.sin(c1 + c2) * l2, b[1] - Math.cos(c1 + c2) * l2, z];
+    P.push(Tb(a, b, r, r * 0.92, sk2, { q: 8, n: 2, c: 2, ...SKINK }), Tb(b, c, r * 0.9, r * 0.75, sk2, { q: 8, n: 2, c: 2, ...SKINK }));
+    P.push(Ee(r * 1.6, r * 1.4, r * 1.5, nail, c[0] - side * 0.002, c[1] + 0.002, z, { q: 8, a: 5, ...OTHERK }));
+  });
+  // большой палец: вперёд и к ладони
+  const t0 = [-side * 0.012, wy - 0.035, -0.034], t1 = [-side * 0.022, wy - 0.068, -0.052], t2 = [-side * 0.034, wy - 0.088, -0.05];
+  P.push(Tb(t0, t1, 0.012, 0.0105, skin, { q: 8, n: 2, c: 2, ...SKINK }), Tb(t1, t2, 0.0098, 0.008, sk2, { q: 8, n: 2, c: 2, ...SKINK }));
+  return P;
+}
+
+// o: skin, shirt, sleeve, pants, shoes, hair, helmet, vest, bare (без рубашки), belt, variant (0..3 — раны и одежда),
+//    eyes, eyesGlow, scale, wide, kind
+export function makeZombie(o) {
+  const g = new THREE.Group();
+  g.rotation.order = 'YXZ';
+  const body = new THREE.Group();
+  g.add(body);
+  const s = o.scale || 1;
+  body.scale.setScalar(s);
+  const W = o.wide || 1, D = 1 + (W - 1) * 0.7, Wl = 1 + (W - 1) * 0.6;
+  const zv = o.variant ?? rnd(4);
+  const skin = o.skin, sk2 = dk(skin, 0.86), rotC = mix(skin, 0x4a3a28, 0.4), sock = mix(dk(skin, 0.25), 0x200010, 0.3);
+  const shirt = o.shirt, pants = o.pants, shoes = o.shoes || 0x2a2420, sleeve = o.sleeve ?? shirt;
+  const bare = !!o.bare, nail = 0x2a2418;
+  const top = bare ? skin : shirt, topK = bare ? SKINK : CLOTHK;
+  const shortSleeve = bare || zv === 0 || zv === 2;
+  const ch = { mat: charMat(true), skin };
+  const lb = (p, parts, glow = false) => limb(p, parts, glow, ch);
+
+  // суставы: таз 0.9, позвоночник 0.94, голова 1.5 (основание черепа), плечи 1.44, локти 1.14, бёдра 0.82, колени 0.4
+  const hips = new THREE.Group(); hips.position.y = 0.9; body.add(hips);
+  const spine = new THREE.Group(); spine.position.y = 0.04; hips.add(spine);
+  const head = new THREE.Group(); head.position.y = 0.56; spine.add(head);
+  const jaw = new THREE.Group(); jaw.position.set(0, 0.045, 0.012); head.add(jaw);
+  const legL = new THREE.Group(), legR = new THREE.Group(), kneeL = new THREE.Group(), kneeR = new THREE.Group();
+  legL.position.set(-0.095 * W, -0.08, 0); legR.position.set(0.095 * W, -0.08, 0);
+  kneeL.position.y = -0.42; kneeR.position.y = -0.42;
+  legL.add(kneeL); legR.add(kneeR); hips.add(legL); hips.add(legR);
+  const armL = new THREE.Group(), armR = new THREE.Group(), elbowL = new THREE.Group(), elbowR = new THREE.Group();
+  armL.position.set(-0.19 * W, 0.455, 0); armR.position.set(0.19 * W, 0.455, 0);
+  elbowL.position.y = -0.3; elbowR.position.y = -0.3;
+  armL.add(elbowL); armR.add(elbowR); spine.add(armL); spine.add(armR);
+  const hand = new THREE.Group();
+  hand.position.set(0, -0.27, -0.01);
+  elbowR.add(hand);
+
+  // таз
+  const Hp = [
+    Tb([0, -0.13, 0.005], [0, 0.1, 0], 0.158 * W, 0.142 * W, pants, { sz: 0.66 * D / W, q: 20, n: 5, ...CLOTHK }),
+    Ee(0.14 * W, 0.14, 0.12 * D, pants, -0.07 * W, -0.07, 0.05 * D, CLOTHK), Ee(0.14 * W, 0.14, 0.12 * D, pants, 0.07 * W, -0.07, 0.05 * D, CLOTHK),
+  ];
+  if (o.belt !== false) Hp.push(Tb([0, 0.02, 0.002], [0, 0.058, 0.002], 0.152 * W, 0.152 * W, 0x3a2a1e, { sz: 0.67 * D / W, q: 20, n: 1, c: 1, ...OTHERK }), Ee(0.05, 0.036, 0.016, 0x8a7a50, 0, 0.04, -0.103 * D, { k: 0.6, ...OTHERK }));
+  lb(hips, Hp);
+
+  // корпус: живот, рёбра, лопатки, трапеции, плечи, шея, ключицы
+  const fz = -0.104 * D;
+  const Sp = [
+    Tb([0, -0.06, 0.004], [0, 0.26, 0.006], 0.148 * W, 0.168 * W, top, { sz: 0.64 * D / W, bulge: -0.1, bp: 0.35, q: 22, n: 6, ...topK }),
+    Tb([0, 0.2, 0.008], [0, 0.42, 0.015], 0.172 * W, 0.15 * W, top, { sz: 0.64 * D / W, bulge: 0.04, bp: 0.3, q: 22, n: 5, ...topK }),
+    Ee(0.27 * W, 0.08, 0.13 * D, top, 0, 0.47, 0.018, { k: 0.9, ...topK }),
+    // плечевой пояс: от корпуса к руке
+    Ee(0.16 * W, 0.09, 0.12 * D, top, -0.13 * W, 0.455, 0.012, { k: 0.9, rz: 0.22, ...topK }),
+    Ee(0.16 * W, 0.09, 0.12 * D, top, 0.13 * W, 0.455, 0.012, { k: 0.9, rz: -0.22, ...topK }),
+    Tb([0, 0.44, 0.012], [0, 0.6, -0.006], 0.05 * Wl, 0.044 * Wl, skin, { q: 14, n: 3, ...SKINK }),
+    // жилы на шее
+    Tb([-0.026, 0.48, -0.035], [-0.02, 0.58, -0.03], 0.007, 0.005, sk2, { q: 8, n: 2, ...SKINK }),
+    Tb([0.026, 0.48, -0.035], [0.02, 0.58, -0.03], 0.007, 0.005, sk2, { q: 8, n: 2, ...SKINK }),
+  ];
+  if (bare) Sp.push(Tb([-0.015, 0.465, -0.075 * D], [-0.13 * W, 0.48, -0.04], 0.009, 0.008, sk2, { q: 8, n: 2, ...SKINK }), Tb([0.015, 0.465, -0.075 * D], [0.13 * W, 0.48, -0.04], 0.009, 0.008, sk2, { q: 8, n: 2, ...SKINK }));
+  if (bare || zv === 1) {
+    // впалый живот и рёбра под кожей
+    // рёбра дугой по грудной клетке: от грудины в сторону и вниз, к бокам тоньше
+    const ribs = bare ? 4 : 3, side0 = bare ? [-1, 1] : [-1];
+    for (const sd of side0) for (let i = 0; i < ribs; i++) {
+      const y = 0.24 + i * 0.05, a = [sd * 0.03, y, fz - 0.004], m = [sd * 0.105 * W, y - 0.04, fz + 0.022], e = [sd * 0.155 * W, y - 0.085, -0.03 * D];
+      Sp.push(Tb(a, m, 0.0068, 0.006, bare ? sk2 : BONE, { q: 8, n: 2, c: 2, ...(bare ? SKINK : OTHERK) }), Tb(m, e, 0.006, 0.004, bare ? sk2 : BONE, { q: 8, n: 2, c: 2, ...(bare ? SKINK : OTHERK) }));
+    }
+    if (!bare) Sp.push(Ee(0.11, 0.13, 0.026, 0x2e0606, -0.08, 0.3, fz + 0.016, OTHERK), Ee(0.125, 0.145, 0.016, dk(shirt, 0.55), -0.08, 0.3, fz + 0.022, CLOTHK));
+    if (bare) Sp.push(Tb([0, 0.2, fz - 0.002], [0, 0.4, fz - 0.004], 0.012, 0.01, sk2, { q: 8, n: 3, ...SKINK }));
+  }
+  if (zv === 0) Sp.push(Ee(0.1, 0.08, 0.03, skin, 0.08, 0.12, fz + 0.012, SKINK), Ee(0.06, 0.045, 0.02, 0x7a1a14, 0.08, 0.12, fz + 0.002, OTHERK));
+  if (zv === 3) Sp.push(Ee(0.2 * W, 0.08, 0.04, skin, 0, 0.02, fz + 0.02, SKINK), Ee(0.07, 0.04, 0.02, 0x7a1a14, -0.05, 0.03, fz + 0.005, OTHERK));
+  if (o.vest != null) {
+    const v = o.vest, vd = dk(v, 0.8);
+    Sp.push(Ee(0.37 * W, 0.36, 0.27 * D, v, 0, 0.29, 0.005, { k: 0.72, ...CLOTHK }));
+    for (const x of [-0.1, 0, 0.1]) Sp.push(Ee(0.085, 0.11, 0.05, vd, x * W, 0.2, -0.14 * D, { k: 0.6, ...CLOTHK }));
+    Sp.push(Ee(0.07, 0.1, 0.045, vd, -0.11 * W, 0.37, -0.135 * D, { k: 0.6, ...CLOTHK }), Tb([-0.12 * W, 0.42, -0.14 * D], [-0.13 * W, 0.56, -0.13 * D], 0.005, 0.004, 0x1a1a1a, { q: 6, n: 2, ...OTHERK }));
+  }
+  // рваный подол: лоскуты разной длины
+  if (!bare) [[-0.11, 0.08], [-0.035, 0.12], [0.04, 0.06], [0.11, 0.1]].forEach(([x, len], i) => {
+    Sp.push(Ee(0.07, len, 0.014, dk(shirt, 0.92), x * W, -0.01 - len / 2 + 0.03, fz + 0.02, { k: 0.6, ...CLOTHK }));
+    Sp.push(Ee(0.075, len * 0.8, 0.014, dk(shirt, 0.88), (x + 0.02) * W, -0.01 - len * 0.4 + 0.03, 0.1 * D - (i & 1) * 0.004, { k: 0.6, ...CLOTHK }));
+  });
+  lb(spine, Sp);
+
+  // голова: череп, лицо, скулы, надбровья, впалые глазницы, провал носа, уши, зубы; челюсть — отдельно
+  const Hd = [
+    Ee(0.152, 0.2, 0.19, skin, 0, 0.118, 0.012, { k: 0.92, ...SKINK }),
+    Ee(0.14, 0.15, 0.12, skin, 0, 0.12, 0.05, SKINK),
+    Ee(0.122, 0.105, 0.1, skin, 0, 0.068, -0.03, { k: 0.9, tx: 1.06, ...SKINK }),
+    Ee(0.052, 0.022, 0.03, skin, -0.03, 0.124, -0.07, SKINK), Ee(0.052, 0.022, 0.03, skin, 0.03, 0.124, -0.07, SKINK),
+    Ee(0.04, 0.025, 0.034, skin, -0.045, 0.078, -0.05, SKINK), Ee(0.04, 0.025, 0.034, skin, 0.045, 0.078, -0.05, SKINK),
+    Ee(0.042, 0.032, 0.03, sock, -0.031, 0.1, -0.062, SKINK), Ee(0.042, 0.032, 0.03, sock, 0.031, 0.1, -0.062, SKINK),
+    Ee(0.062, 0.03, 0.045, MOUTH, 0, 0.034, -0.055, OTHERK),
+    Ee(0.056, 0.009, 0.02, GUM, 0, 0.049, -0.069, OTHERK),
+    Ee(0.02, 0.016, 0.01, MOUTH, 0, 0.066, -0.087, OTHERK),
+  ];
+  // верхние зубы по дуге: жёлтые, один выбит
+  for (let i = 0; i < 6; i++) {
+    if (i === 4 && zv % 2 === 0) continue;
+    const x = (i - 2.5) * 0.0088;
+    Hd.push(Ee(0.0075, 0.011 + (i % 2) * 0.002, 0.006, i === 1 ? 0xa89870 : TEETH, x, 0.04, -0.075 + Math.abs(x) * 0.4, { q: 8, a: 5, ...OTHERK }));
+  }
+  if (zv !== 3) Hd.push(Ee(0.016, 0.032, 0.018, skin, 0, 0.088, -0.083, { rx: 0.35, ...SKINK }));
+  Hd.push(Ee(0.012, 0.046, 0.028, sk2, -0.077, 0.098, 0.012, SKINK));
+  if (zv !== 1) Hd.push(Ee(0.012, 0.046, 0.028, sk2, 0.077, 0.098, 0.012, SKINK));
+  else Hd.push(Ee(0.016, 0.03, 0.03, 0x7a1a14, 0.074, 0.095, 0.012, OTHERK));
+  if (zv === 0) Hd.push(Ee(0.05, 0.04, 0.03, 0x6a1410, 0.045, 0.17, -0.04, OTHERK), Ee(0.03, 0.022, 0.02, BONE, 0.045, 0.172, -0.047, OTHERK));
+  if (zv === 2) Hd.push(Ee(0.016, 0.07, 0.06, 0x7a1a14, 0.074, 0.13, 0.0, OTHERK));
+  if (o.hair != null && o.helmet == null) {
+    // волосы клочьями, с проплешинами
+    const hr = o.hair;
+    Hd.push(Ee(0.16, 0.15, 0.196, hr, 0, 0.152, 0.032, { k: 0.92, rx: -0.28, ...CLOTHK }));
+    for (let i = 0; i < 6; i++) Hd.push(Tb([(i - 2.5) * 0.018, 0.16, 0.1], [(i - 2.5) * 0.02, 0.07 - (i % 2) * 0.03, 0.104], 0.006, 0.0025, hr, { q: 6, n: 2, ...CLOTHK }));
+  } else if (o.helmet == null) Hd.push(Ee(0.07, 0.02, 0.07, rotC, -0.02, 0.212, 0.01, SKINK));
+  if (o.helmet != null) {
+    const hm = o.helmet;
+    Hd.push(Ee(0.178, 0.1, 0.205, hm, 0, 0.19, 0.012, { k: 0.85, ...OTHERK }), Ee(0.195, 0.022, 0.222, dk(hm, 0.85), 0, 0.152, 0.012, { k: 0.8, ...OTHERK }),
+      Tb([-0.08, 0.15, 0.0], [-0.06, 0.04, -0.03], 0.005, 0.005, 0x2a2a20, { q: 6, n: 2, ...OTHERK }), Tb([0.08, 0.15, 0.0], [0.06, 0.04, -0.03], 0.005, 0.005, 0x2a2a20, { q: 6, n: 2, ...OTHERK }));
+  }
+  lb(head, Hd);
+  const eye = o.eyes || 0xd0d0b0;
+  const eyes = [Ee(0.014, 0.012, 0.008, eye, -0.031, 0.1, -0.076, { q: 10, a: 6 }), Ee(0.014, 0.012, 0.008, eye, 0.031, 0.1, -0.076, { q: 10, a: 6 })];
+  if (o.eyesGlow) lb(head, eyes, true); else lb(head, eyes);
+  // челюсть: нижняя челюсть, подбородок, нижние зубы, рот, кровавые потёки
+  const Jw = [
+    Ee(0.106, 0.042, 0.095, skin, 0, -0.028, -0.028, { k: 0.88, tx: 0.86, ...SKINK }),
+    Ee(0.042, 0.03, 0.032, skin, 0, -0.044, -0.07, SKINK),
+    Ee(0.06, 0.02, 0.048, MOUTH, 0, -0.008, -0.05, OTHERK),
+    Ee(0.052, 0.008, 0.02, GUM, 0, -0.012, -0.068, OTHERK),
+    Tb([0.012, -0.022, -0.082], [0.014, -0.07, -0.078], 0.0045, 0.002, BLOOD, { q: 6, n: 2, ...OTHERK }),
+    Tb([-0.015, -0.02, -0.08], [-0.016, -0.05, -0.076], 0.004, 0.002, BLOOD, { q: 6, n: 2, ...OTHERK }),
+  ];
+  for (let i = 0; i < 6; i++) {
+    const x = (i - 2.5) * 0.0082;
+    Jw.push(Ee(0.007, 0.01, 0.0055, i === 3 ? 0xa89870 : TEETH, x, -0.004, -0.072 + Math.abs(x) * 0.4, { q: 8, a: 5, ...OTHERK }));
+  }
+  if (zv === 0) Jw.push(Ee(0.03, 0.03, 0.03, 0x7a1a14, 0.045, -0.015, -0.05, OTHERK));
+  lb(jaw, Jw);
+
+  // руки: плечо, локоть, предплечье с мышцами, запястье, кисть
+  for (const [a, el, side] of [[armL, elbowL, -1], [armR, elbowR, 1]]) {
+    const up = bare ? skin : sleeve, fore = shortSleeve ? skin : sleeve, Wa = 1 + (W - 1) * 0.8;
+    const A = [
+      Tb([0, 0.01, 0.004], [0, -0.3, 0], 0.052 * Wa, 0.04 * Wa, up, { bulge: 0.1, bp: 0.12, sx: 0.95, sz: 1.05, q: 16, ...(bare ? SKINK : CLOTHK) }),
+      Ee(0.07 * Wa, 0.09, 0.095 * Wa, up, side * 0.01, -0.02, 0.002, { k: 0.95, ...(bare ? SKINK : CLOTHK) }),
+    ];
+    if (shortSleeve && !bare) A.push(Ee(0.11 * Wa, 0.05, 0.105 * Wa, dk(sleeve, 0.85), 0, -0.17, 0, { k: 0.8, ...CLOTHK }), Tb([0, -0.19, 0], [0, -0.3, 0], 0.041 * Wa, 0.039 * Wa, skin, { q: 12, n: 3, ...SKINK }));
+    lb(a, A);
+    const F = [
+      Ee(0.075 * Wa, 0.075, 0.072 * Wa, fore, 0, 0, 0.01, fore === skin ? SKINK : CLOTHK),
+      Tb([0, 0, 0], [0, -0.25, -0.005], 0.042 * Wa, 0.029 * Wa, fore, { bulge: 0.12, bp: 0.22, sx: 1.12, sz: 0.9, ...(fore === skin ? SKINK : CLOTHK) }),
+      ...zHand(side, skin, nail, -0.262),
+    ];
+    if (fore !== skin) F.push(Tb([0, -0.2, -0.004], [0, -0.245, -0.005], 0.036 * Wa, 0.034 * Wa, dk(sleeve, 0.8), { q: 12, n: 2, ...CLOTHK }));
+    if ((zv === 2 && side < 0) || (zv === 1 && side > 0)) F.push(Ee(0.035, 0.05, 0.02, 0x7a1a14, side * 0.03, -0.12, -0.022, OTHERK), Ee(0.018, 0.03, 0.012, BONE, side * 0.034, -0.125, -0.028, OTHERK));
+    lb(el, F);
+  }
+
+  // ноги: бедро, колено, голень с икрой, штанина, ботинок
+  for (const [l, kn, side] of [[legL, kneeL, -1], [legR, kneeR, 1]]) {
+    const torn = (zv === 1 && side < 0) || (zv === 3 && side > 0);
+    lb(l, [Tb([0, 0.04, 0.008], [0, -0.42, -0.005], 0.088 * Wl, 0.057 * Wl, pants, { bulge: 0.05, bp: 0.25, sx: 1.04, sz: 1.1, q: 16, ...CLOTHK })]);
+    const low = torn ? skin : pants, lowK = torn ? SKINK : CLOTHK;
+    const K = [
+      Ee(0.08 * Wl, 0.075, 0.07 * Wl, pants, 0, 0, -0.014, CLOTHK),
+      Tb([0, 0, 0], [0, -0.34, 0.01], 0.054 * Wl, 0.036 * Wl, low, { bulge: 0.1, bp: 0.28, sz: 1.12, ...lowK }),
+      Ee(0.08 * Wl, 0.15, 0.075 * Wl, low, 0, -0.12, 0.026, lowK),
+      Ee(0.095 * Wl, 0.075, 0.25 * Wl, shoes, 0, -0.368, -0.055, { k: 0.7, ...OTHERK }),
+      Ee(0.1 * Wl, 0.022, 0.26 * Wl, 0x17130f, 0, -0.4, -0.055, { k: 0.6, ...OTHERK }),
+      Ee(0.09 * Wl, 0.08, 0.1 * Wl, shoes, 0, -0.33, 0.0, { k: 0.75, ...OTHERK }),
+    ];
+    if (torn) K.push(Ee(0.11 * Wl, 0.05, 0.1 * Wl, dk(pants, 0.6), 0, -0.05, 0, { k: 0.7, ...CLOTHK }), Ee(0.04, 0.06, 0.02, 0x7a1a14, 0.01, -0.16, -0.05, OTHERK));
+    else K.push(Ee(0.1 * Wl, 0.045, 0.1 * Wl, dk(pants, 0.85), 0, -0.3, 0.006, { k: 0.8, ...CLOTHK }));
+    lb(kn, K);
+  }
+
+  // детали боссов и громилы (zExtras) — по старым координатам «цельной» модели, раскладываются по суставам
+  const split = (parts, cut) => [parts.filter(p => p[5] > cut), parts.filter(p => p[5] <= cut)];
+  const shift = (p, dy, dz = 0) => { const q = p.slice(); q[5] += dy; q[6] += dz; return q; };
+  const addTorso = parts => {
+    const [hi, lo] = split(parts, 0.94);
+    if (lo.length) lb(hips, lo.map(p => shift(p, -0.9)));
+    if (hi.length) lb(spine, hi.map(p => shift(p, -0.94)));
+  };
+  const addArm = (arm, elbow, parts) => {
+    const [up, dn] = split(parts, -0.3);
+    if (up.length) lb(arm, up);
+    if (dn.length) lb(elbow, dn.map(p => shift(p, 0.3)));
+  };
+  const addHead = parts => lb(head, parts.map(p => shift(p, -0.06)));
+  const addLeg = (leg, knee, parts) => {
+    const [up, dn] = split(parts, -0.41);
+    if (up.length) lb(leg, up);
+    if (dn.length) lb(knee, dn.map(p => shift(p, 0.42)));
+  };
+
+  g.userData = {
+    body, hips, spine, head, jaw, legL, legR, kneeL, kneeR, armL, armR, elbowL, elbowR, hand,
+    phase: Math.random() * 6, zombie: true, W, zv, kind: o.kind || 'walker', real: true,
+    limp: [-1, 0, 1, 0][Math.floor(Math.random() * 4)],
+    hang: Math.random() < 0.3 ? (Math.random() < 0.5 ? -1 : 1) : 0,
+    tilt: (Math.random() - 0.5) * 0.5,
+    seed: Math.random() * 6,
+    addTorso, addHead, addArm, addLeg, lb, skin,
   };
   return g;
 }
@@ -614,7 +881,15 @@ function zombiePose(u, dt, speed, o) {
   if (fast) { sL = 0.35 - s * 1.0; sR = 0.35 + s * 1.0; eL = eR = 1.15; zL = 0.25; zR = -0.25; }
   else if (heavy) { sL = 0.3 + Math.sin(p + 1) * 0.25 * st; sR = 0.3 + Math.sin(p + 1 + Math.PI) * 0.25 * st; eL = eR = 0.3; zL = 0.18; zR = -0.18; }
   else if (crouch) { sL = 0.9 + Math.sin(t * 1.3) * 0.08; sR = 0.95 + Math.sin(t * 1.1) * 0.08; eL = eR = 0.85; }
-  else { sL = 1.15 + Math.sin(p + 0.5) * 0.12 + Math.sin(t * 0.9) * 0.05; sR = 1.05 + Math.sin(p + 2.2) * 0.12; eL = 0.38; eR = 0.5; }
+  else {
+    // руки свисают и болтаются в такт шагу, локти чуть согнуты; когда игрок рядом — тянутся к нему
+    const r = o.reach || 0;
+    const hL = 0.08 - s * 0.32 * st + Math.sin(t * 0.9) * 0.04, hR = 0.08 + s * 0.32 * st + Math.sin(t * 1.1 + 1) * 0.04;
+    sL = lerp(hL, 1.15 + Math.sin(p + 0.5) * 0.12 + Math.sin(t * 0.9) * 0.05, r);
+    sR = lerp(hR, 1.05 + Math.sin(p + 2.2) * 0.12, r);
+    eL = lerp(0.2 + Math.max(0, s) * 0.25 * st, 0.38, r); eR = lerp(0.24 + Math.max(0, -s) * 0.25 * st, 0.5, r);
+    zL = lerp(0.06, 0.12, r); zR = -zL;
+  }
   // безвольно висящая рука
   if (u.hang === -1 && !fast) { sL = 0.12 + s * 0.22 * st; eL = 0.12; zL = 0.04; }
   if (u.hang === 1 && !fast) { sR = 0.12 - s * 0.22 * st; eR = 0.12; zR = -0.04; }
@@ -677,91 +952,110 @@ export function makePlayerModel(color, skinIdx = 0, look = '') {
 
 // внешность обычных зомби — несколько готовых вариантов (каждый строит геометрию один раз)
 const WALKERS = [
-  { skin: 0x7d9a6b, shirt: 0x5a4a3a, pants: 0x3a3a44, hair: 0x2a2a20 },
-  { skin: 0x8aa078, shirt: 0x6a6a5a, pants: 0x4a4030, hair: 0x4a3a28 },
-  { skin: 0x748e66, shirt: 0x4a5a6a, pants: 0x2e3a4a, hair: 0x6a6a60 },
-  { skin: 0x7d9a6b, shirt: 0x7a3a3a, pants: 0x3a3a44, hair: 0x1a1a18 },
-  { skin: 0x8aa078, shirt: 0x3a4a3a, pants: 0x2e3a4a, hair: null },
-  { skin: 0x748e66, shirt: 0x8a7a5a, pants: 0x4a4030, hair: 0x2a2a20 },
+  { skin: 0x8b9a7a, shirt: 0x5a4a3a, pants: 0x3a3a44, hair: 0x2a2a20 },
+  { skin: 0x9ca58c, shirt: 0x6a6a5a, pants: 0x4a4030, hair: 0x4a3a28 },
+  { skin: 0x7f8c70, shirt: 0x4a5a6a, pants: 0x2e3a4a, hair: 0x6a6a60 },
+  { skin: 0xa3a68e, shirt: 0x7a3a3a, pants: 0x3a3a44, hair: 0x1a1a18 },
+  { skin: 0x86947a, shirt: 0x3a4a3a, pants: 0x2e3a4a, hair: null },
+  { skin: 0x93a084, shirt: 0x8a7a5a, pants: 0x4a4030, hair: 0x2a2a20 },
 ];
 const rnd = n => Math.floor(Math.random() * n);
 
 export const ZOMBIE_LOOK = {
-  walker: () => { const i = rnd(WALKERS.length); return makeHumanoid({ zombie: true, kind: 'walker', ...WALKERS[i], variant: i % 4, eyes: 0xff3020, eyesGlow: true }); },
-  runner: () => makeHumanoid({ zombie: true, kind: 'runner', skin: 0xa0b090, shirt: 0x6a2a2a, pants: 0x2a2a30, hair: null, bare: true, belt: false, variant: rnd(2) * 2, eyes: 0xffd020, eyesGlow: true, scale: 0.95 }),
-  tank: () => zExtras(makeHumanoid({ zombie: true, kind: 'tank', skin: 0x6a8a5a, shirt: 0x4a4038, pants: 0x30302a, hair: null, belt: false, variant: 3, eyes: 0xff3020, eyesGlow: true, scale: 1.35, wide: 1.4 }), 'tank'),
-  soldier: () => makeHumanoid({ zombie: true, kind: 'soldier', skin: 0x7a9070, shirt: 0x55603e, sleeve: 0x4a5536, pants: 0x4a5536, shoes: 0x2a2620, helmet: 0x3e4a2e, vest: 0x5a6440, variant: rnd(4), eyes: 0xff3020, eyesGlow: true }),
+  walker: () => { const i = rnd(WALKERS.length); return makeZombie({ kind: 'walker', ...WALKERS[i], variant: i % 4, eyes: 0xff3020, eyesGlow: true }); },
+  runner: () => makeZombie({ kind: 'runner', skin: 0xa0b090, shirt: 0x6a2a2a, pants: 0x2a2a30, hair: null, bare: true, belt: false, variant: rnd(2) * 2, eyes: 0xffd020, eyesGlow: true, scale: 0.95 }),
+  tank: () => zExtras(makeZombie({ kind: 'tank', skin: 0x6a8a5a, shirt: 0x4a4038, pants: 0x30302a, hair: null, belt: false, variant: 3, eyes: 0xff3020, eyesGlow: true, scale: 1.35, wide: 1.4 }), 'tank'),
+  soldier: () => makeZombie({ kind: 'soldier', skin: 0x7a9070, shirt: 0x55603e, sleeve: 0x4a5536, pants: 0x4a5536, shoes: 0x2a2620, helmet: 0x3e4a2e, vest: 0x5a6440, variant: rnd(4), eyes: 0xff3020, eyesGlow: true }),
   // боссы
-  butcher: () => zExtras(makeHumanoid({ zombie: true, kind: 'butcher', skin: 0x8a6a5a, shirt: 0xd8d0c0, sleeve: 0x8a6a5a, pants: 0x3a3028, hair: null, variant: 2, eyes: 0xffe020, eyesGlow: true, scale: 2.1, wide: 1.5 }), 'butcher'),
-  screamer: () => zExtras(makeHumanoid({ zombie: true, kind: 'screamer', skin: 0xc8c8b0, shirt: 0x4a2a5a, pants: 0x2a1a30, hair: 0xe0e0e0, belt: false, variant: 1, eyes: 0x60ff60, eyesGlow: true, scale: 1.6 }), 'screamer'),
-  leaper: () => zExtras(makeHumanoid({ zombie: true, kind: 'leaper', skin: 0x6a8a4a, shirt: 0x3a4a2a, pants: 0x2a3a20, hair: null, bare: true, variant: 0, eyes: 0xff3020, eyesGlow: true, scale: 1.75 }), 'leaper'),
+  butcher: () => zExtras(makeZombie({ kind: 'butcher', skin: 0x8a6a5a, shirt: 0xd8d0c0, sleeve: 0x8a6a5a, pants: 0x3a3028, hair: null, variant: 2, eyes: 0xffe020, eyesGlow: true, scale: 2.1, wide: 1.5 }), 'butcher'),
+  screamer: () => zExtras(makeZombie({ kind: 'screamer', skin: 0xc8c8b0, shirt: 0x4a2a5a, pants: 0x2a1a30, hair: 0xe0e0e0, belt: false, variant: 1, eyes: 0x60ff60, eyesGlow: true, scale: 1.6 }), 'screamer'),
+  leaper: () => zExtras(makeZombie({ kind: 'leaper', skin: 0x6a8a4a, shirt: 0x3a4a2a, pants: 0x2a3a20, hair: null, bare: true, variant: 0, eyes: 0xff3020, eyesGlow: true, scale: 1.75 }), 'leaper'),
 };
 
 // особые детали: брюхо и опухоли танка, фартук и тесак мясника, волосы и платье крикуньи, шипы и когти прыгуна
 function zExtras(g, kind) {
-  const u = g.userData, W = u.W;
+  const u = g.userData, W = u.W, D = 1 + (W - 1) * 0.7, L = u.lb, fz = -0.104 * D, skin = u.skin;
   const claws = (hex, n, len) => {
-    for (const [a, el] of [[u.armL, u.elbowL], [u.armR, u.elbowR]]) {
+    for (const [el, side] of [[u.elbowL, -1], [u.elbowR, 1]]) {
       const C = [];
-      for (let i = 0; i < n; i++) C.push([0.022, len, 0.03, hex, (i - (n - 1) / 2) * 0.04, -0.71 - len * 0.4, -0.04, R(0.3, { tx: 0.15, tz: 0.15, rx: Math.PI - 0.5 })]);
-      u.addArm(a, el, C);
+      for (let i = 0; i < n; i++) {
+        const z = (i - (n - 1) / 2) * 0.02;
+        C.push(Tb([-side * 0.012, -0.352, z], [-side * 0.04, -0.352 - len, z - 0.012], 0.0065, 0.0008, hex, { q: 8, n: 3, c: 1, ...OTHERK }));
+      }
+      L(el, C);
     }
   };
   if (kind === 'tank') {
-    u.addTorso([
-      [0.4 * W, 0.3, 0.12, dk(0x6a8a5a, 0.95), 0, 1.05, -0.17 * W, R(0.45, { b: 0.4 })],
-      [0.06, 0.05, 0.03, WOUND, 0.08, 1.0, -0.235 * W],
-      [0.14, 0.12, 0.1, 0x8aa070, 0.2 * W, 1.42, -0.06, R(0.45, { b: 0.45 })],
-      [0.1, 0.09, 0.08, 0x8aa070, -0.12 * W, 1.18, 0.16 * W, R(0.45, { b: 0.45 })],
-      [0.16 * W, 0.4, 0.02, STRAP, 0.12 * W, 1.2, -0.158 * W],
+    // вываленное брюхо в разорванной рубахе, наросты на плече, спине и голове, ремень через грудь
+    L(u.spine, [
+      Ee(0.3 * W, 0.24, 0.17 * D, skin, 0, 0.08, fz + 0.02, { ...SKINK }),
+      Ee(0.06, 0.05, 0.03, 0x7a1a14, 0.06, 0.06, fz - 0.06, OTHERK),
+      Ee(0.13, 0.11, 0.11, mix(skin, 0x9ab07a, 0.4), 0.15 * W, 0.44, -0.02, SKINK),
+      Ee(0.11, 0.1, 0.09, mix(skin, 0x9ab07a, 0.4), -0.09 * W, 0.26, 0.1 * D, SKINK),
+      Tb([-0.12 * W, 0.44, fz + 0.01], [0.13 * W, 0.04, fz - 0.005], 0.014, 0.014, STRAP, { q: 8, n: 4, ...OTHERK }),
     ]);
-    u.addHead([[0.12, 0.09, 0.1, 0x8aa070, 0.08, 0.34, 0.06, R(0.45, { b: 0.45 })]]);
+    L(u.head, [Ee(0.08, 0.07, 0.08, mix(skin, 0x9ab07a, 0.4), 0.05, 0.19, 0.05, SKINK)]);
   } else if (kind === 'butcher') {
-    u.addTorso([
-      [0.48 * W, 0.66, 0.03, 0xcfc6b4, 0, 1.08, -0.162 * W, R(0.1)],
-      [0.26 * W, 0.24, 0.034, 0x7a1616, 0.05, 1.0, -0.163 * W],
-      [0.14 * W, 0.16, 0.034, 0x8a1c1c, -0.1, 1.28, -0.163 * W],
-      [0.04, 0.2, 0.034, 0x7a1616, 0.12, 0.82, -0.163 * W], [0.03, 0.14, 0.034, 0x7a1616, -0.06, 0.85, -0.163 * W],
-      [0.035, 0.03, 0.31 * W, STRAP, -0.13, 1.48, 0], [0.035, 0.03, 0.31 * W, STRAP, 0.13, 1.48, 0],
-      [0.55 * W, 0.04, 0.31 * W, STRAP, 0, 1.12, 0, R(0.25)],
-      [0.016, 0.1, 0.016, 0x9aa0a6, -0.24 * W, 0.86, -0.08], [0.05, 0.016, 0.016, 0x9aa0a6, -0.228 * W, 0.81, -0.08],
-      [0.016, 0.1, 0.016, 0x9aa0a6, -0.26 * W, 0.86, 0.02], [0.05, 0.016, 0.016, 0x9aa0a6, -0.248 * W, 0.81, 0.02],
+    // фартук по фигуре (грудь и подол), лямки, крюки на поясе, швы на черепе, тесак в руке
+    const ap = 0xcfc6b4;
+    L(u.spine, [
+      Ee(0.3 * W, 0.42, 0.022, ap, 0, 0.2, fz - 0.004, { k: 0.8, ...CLOTHK }),
+      Tb([-0.09 * W, 0.4, fz + 0.005], [-0.08 * W, 0.5, 0.02], 0.012, 0.012, STRAP, { q: 8, n: 3, ...OTHERK }),
+      Tb([0.09 * W, 0.4, fz + 0.005], [0.08 * W, 0.5, 0.02], 0.012, 0.012, STRAP, { q: 8, n: 3, ...OTHERK }),
     ]);
-    u.addHead([[0.02, 0.012, 0.3, 0x3a1414, 0.04, 0.352, 0], [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, -0.1],
-      [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, -0.03], [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, 0.04], [0.07, 0.014, 0.012, 0x3a1414, 0.04, 0.353, 0.11]]);
-    limb(u.hand, [
-      [0.05, 0.2, 0.05, 0x3a2a1e, 0, -0.1, 0, R(0.35)],
-      [0.054, 0.012, 0.012, 0xb8bcc0, 0, -0.06, 0], [0.054, 0.012, 0.012, 0xb8bcc0, 0, -0.13, 0],
-      [0.055, 0.03, 0.055, 0xb8bcc0, 0, -0.21, 0, R(0.3)],
-      [0.022, 0.2, 0.34, 0xb8bcc0, 0, -0.33, -0.1],
-      [0.026, 0.035, 0.34, 0xe0e4e8, 0, -0.43, -0.1],
-      [0.028, 0.07, 0.12, 0x7a1616, 0, -0.39, -0.19],
-      [0.03, 0.035, 0.035, 0x1a1a1a, 0, -0.26, -0.22],
+    L(u.hips, [
+      Ee(0.3 * W, 0.36, 0.02, ap, 0, -0.16, -0.112 * D, { k: 0.8, tx: 1.15, ...CLOTHK }),
+      Tb([-0.15 * W, 0.04, -0.03], [-0.16 * W, -0.06, -0.035], 0.006, 0.006, 0x9aa0a6, { q: 6, n: 2, ...OTHERK }),
+      Tb([-0.16 * W, -0.06, -0.035], [-0.14 * W, -0.075, -0.06], 0.006, 0.002, 0x9aa0a6, { q: 6, n: 2, ...OTHERK }),
+    ]);
+    const st = [];
+    for (let i = 0; i < 5; i++) st.push(Tb([-0.05, 0.215 - Math.abs(i - 2) * 0.004, -0.05 + i * 0.03], [0.05, 0.215 - Math.abs(i - 2) * 0.004, -0.05 + i * 0.03], 0.0035, 0.0035, 0x3a1414, { q: 6, n: 2, ...OTHERK }));
+    st.push(Tb([0, 0.22, -0.07], [0, 0.22, 0.09], 0.004, 0.004, 0x3a1414, { q: 6, n: 4, ...OTHERK }));
+    L(u.head, st);
+    // тесак: деревянная рукоять с заклёпками, тяжёлое лезвие с заточкой, ржавчина и кровь у кромки
+    L(u.hand, [
+      Tb([0, 0.0, 0], [0, -0.2, 0], 0.024, 0.026, 0x3a2a1e, { q: 12, n: 3, ...OTHERK }),
+      Ee(0.03, 0.012, 0.012, 0xb8bcc0, 0, -0.06, 0, OTHERK), Ee(0.03, 0.012, 0.012, 0xb8bcc0, 0, -0.13, 0, OTHERK),
+      Ee(0.02, 0.24, 0.34, 0x9aa0a6, 0, -0.33, -0.1, { k: 0.35, ...OTHERK }),
+      Ee(0.012, 0.03, 0.33, 0xe0e4e8, 0, -0.44, -0.1, { k: 0.4, ...OTHERK }),
+      Ee(0.022, 0.09, 0.15, 0x5a0c0c, 0, -0.41, -0.2, { k: 0.7, ...OTHERK }),
+      Ee(0.022, 0.06, 0.06, 0x6a4a30, 0, -0.27, 0.02, { k: 0.7, ...OTHERK }),
     ]);
   } else if (kind === 'screamer') {
-    const hw = 0xe0e0d8, hw2 = 0xd0d0c8;
-    u.addHead([
-      [0.39, 0.52, 0.1, hw, 0, 0.08, 0.17, R(0.3)],
-      [0.06, 0.44, 0.09, hw, -0.18, 0.1, 0.03, R(0.3)], [0.06, 0.44, 0.09, hw2, 0.18, 0.1, 0.03, R(0.3)],
-      [0.05, 0.3, 0.03, hw2, -0.11, 0.16, -0.18, R(0.3)], [0.04, 0.24, 0.03, hw, 0.12, 0.19, -0.18, R(0.3)],
-      [0.14, 0.12, 0.02, 0x1a0606, 0, 0.065, -0.168],
-      [0.12, 0.016, 0.014, 0xcfc6a6, 0, 0.118, -0.172], [0.1, 0.016, 0.014, 0xcfc6a6, 0, 0.012, -0.17],
-    ]);
-    const S = [[0.54, 0.46, 0.34, 0x3a1e48, 0, 0.62, 0, R(0.25, { tx: 0.85, tz: 0.85 })]];
-    for (const x of [-0.2, -0.07, 0.07, 0.2]) S.push([0.07, 0.12, 0.02, 0x2e1838, x, 0.36, -0.165], [0.07, 0.1, 0.02, 0x2e1838, x + 0.03, 0.37, 0.165]);
-    u.addTorso(S);
-    claws(0xd8d0b8, 3, 0.11);
+    // длинные седые космы до пояса, рваное платье, когти
+    const hw = 0xe0e0d8, hw2 = 0xc8c8c0, dress = 0x3a1e48;
+    const H = [
+      Ee(0.17, 0.2, 0.2, hw, 0, 0.15, 0.03, { k: 0.92, rx: -0.2, ...CLOTHK }),
+      Ee(0.17, 0.34, 0.07, hw, 0, -0.02, 0.09, { k: 0.8, ...CLOTHK }),
+    ];
+    for (let i = 0; i < 7; i++) {
+      const x = (i - 3) * 0.026, side = Math.abs(i - 3) > 2;
+      H.push(Tb([x, 0.16, side ? 0.0 : 0.08], [x * 1.2, -0.12 - (i % 3) * 0.05, side ? -0.02 : 0.1], 0.012, 0.004, i & 1 ? hw : hw2, { q: 6, n: 3, ...CLOTHK }));
+    }
+    L(u.head, H);
+    const S = [Tb([0, 0.06, 0], [0, -0.62, 0.01], 0.17, 0.27, dress, { sz: 0.75, q: 20, n: 6, c: 1, ...CLOTHK })];
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * 6.283, x = Math.sin(a) * 0.24, z = Math.cos(a) * 0.19;
+      S.push(Ee(0.07, 0.14 + (i % 3) * 0.04, 0.012, dk(dress, 0.85), x, -0.66 - (i % 3) * 0.02, z, { k: 0.6, ry: a, ...CLOTHK }));
+    }
+    L(u.hips, S);
+    claws(0xd8d0b8, 4, 0.08);
   } else {
+    // прыгун: гребень позвонков, костяные шипы на локтях, удлинённая пасть с клыками, когти
     const sp = [];
-    for (let i = 0; i < 6; i++) sp.push([0.07 - i * 0.005, 0.2, 0.07, BONE, 0, 1.48 - i * 0.11, 0.2 * W, R(0.3, { tx: 0.08, tz: 0.08, rx: 0.9 })]);
-    u.addTorso(sp);
-    for (const [a, el] of [[u.armL, u.elbowL], [u.armR, u.elbowR]]) u.addArm(a, el, [[0.05, 0.14, 0.05, BONE, 0, -0.33, 0.12, R(0.3, { tx: 0.1, tz: 0.1, rx: 1.4 })]]);
-    u.addHead([
-      [0.22, 0.09, 0.12, dk(0x6a8a4a, 0.9), 0, 0.06, -0.19, R(0.3)],
-      [0.025, 0.06, 0.025, BONE, -0.06, 0.0, -0.235, R(0.3, { tx: 0.1, tz: 0.1, rx: Math.PI })],
-      [0.025, 0.06, 0.025, BONE, 0.06, 0.0, -0.235, R(0.3, { tx: 0.1, tz: 0.1, rx: Math.PI })],
+    for (let i = 0; i < 7; i++) sp.push(Ee(0.035, 0.03, 0.045, BONE, 0, 0.46 - i * 0.075, 0.1 * D + 0.012 - Math.abs(i - 3) * 0.004, { ...OTHERK }));
+    L(u.spine, sp);
+    for (const [arm, side] of [[u.armL, -1], [u.armR, 1]]) L(arm, [Tb([side * 0.01, -0.27, 0.03], [side * 0.02, -0.3, 0.13], 0.018, 0.003, BONE, { q: 8, n: 3, ...OTHERK })]);
+    L(u.jaw, [
+      Ee(0.11, 0.05, 0.12, skin, 0, -0.035, -0.045, { k: 0.9, ...SKINK }),
+      Tb([-0.028, -0.008, -0.088], [-0.03, 0.03, -0.092], 0.0065, 0.001, BONE, { q: 6, n: 3, ...OTHERK }),
+      Tb([0.028, -0.008, -0.088], [0.03, 0.03, -0.092], 0.0065, 0.001, BONE, { q: 6, n: 3, ...OTHERK }),
     ]);
-    claws(0xd8d0b8, 3, 0.15);
+    L(u.head, [
+      Tb([-0.028, 0.05, -0.078], [-0.03, 0.005, -0.084], 0.006, 0.001, BONE, { q: 6, n: 3, ...OTHERK }),
+      Tb([0.028, 0.05, -0.078], [0.03, 0.005, -0.084], 0.006, 0.001, BONE, { q: 6, n: 3, ...OTHERK }),
+    ]);
+    claws(0xd8d0b8, 4, 0.11);
   }
   return g;
 }
@@ -1350,14 +1644,37 @@ const BUILD = {
   },
 };
 
+// готовые модели (assets/models): масштаб, сдвиг (прицельная линия — на 0,1 выше начала координат, как ждёт
+// прицеливание), подъём самых тёмных цветов, чтобы чёрный пластик и воронение не сливались в силуэт
+const GUN_FIT = {
+  rifle: { s: 1, off: [0, -0.033, 0], lift: 0.006 },
+  qbz: { s: 1, off: [0, -0.057, 0], lift: 0.016 },
+  asval: { s: 0.885, off: [0, -0.02, 0], lift: 0.006 },
+};
+
+function fittedGun(geo, f) {
+  const g = geo.clone();
+  g.scale(f.s, f.s, f.s);
+  g.translate(...f.off);
+  const c = g.attributes.color;
+  for (let i = 0; i < c.array.length; i++) c.array[i] = c.array[i] + f.lift * (1 - c.array[i]);
+  g.computeBoundingSphere();
+  g.userData.shared = true;
+  return { geo: g, glow: [], shiny: true };
+}
+
 const itemCache = new Map();
 export function itemModel(id) {
-  const key = BUILD[id] ? id : 'scrap';
+  const key = BUILD[id] || GUN_FIT[id] ? id : 'scrap';
   let c = itemCache.get(key);
   if (!c) {
-    const g = new THREE.Group();
-    BUILD[key](g);
-    c = bakeParts(g, 0.04, true);
+    const lg = GUN_FIT[key] && gunGeo(key);
+    if (lg) c = fittedGun(lg, GUN_FIT[key]);
+    else {
+      const g = new THREE.Group();
+      (BUILD[key] || BUILD.rifle)(g);
+      c = bakeParts(g, 0.04, true);
+    }
     itemCache.set(key, c);
   }
   return fromBaked(c);
@@ -1595,8 +1912,8 @@ function palmHand(p, skin, sleeve, y) {
   forearm(P, skin, sleeve, w.x, w.y, w.z, 0.5, 0.2);
 }
 
-const VM_GRIP = { pistol: [-0.008, 0.032, 0.28], smg: [-0.03, 0.04, 0.28], shotgun: [-0.004, 0.125, 0.95], rifle: [-0.03, 0.04, 0.28], asval: [-0.04, 0.036, 0.28], sniper: [-0.04, 0.085, 0.35], rpg: [0.044, 0.016, 0.22], rpg_e: [0.044, 0.016, 0.22] };
-const VM_SUPPORT = { smg: [-0.05, -0.17], shotgun: [-0.056, -0.33], rifle: [-0.051, -0.32], asval: [-0.052, -0.215], sniper: [-0.062, -0.22], rpg: [0.043, -0.15], rpg_e: [0.043, -0.15] };
+const VM_GRIP = { pistol: [-0.008, 0.032, 0.28], smg: [-0.03, 0.04, 0.28], shotgun: [-0.004, 0.125, 0.95], rifle: [0.0, -0.01, 0.32], qbz: [-0.018, -0.026, 0.46], asval: [0.023, -0.008, 0.36], sniper: [-0.04, 0.085, 0.35], rpg: [0.044, 0.016, 0.22], rpg_e: [0.044, 0.016, 0.22] };
+const VM_SUPPORT = { smg: [-0.05, -0.17], shotgun: [-0.056, -0.33], rifle: [0.02, -0.31], qbz: [0.004, -0.27], asval: [0.042, -0.215], sniper: [-0.062, -0.22], rpg: [0.043, -0.15], rpg_e: [0.043, -0.15] };
 const VM_HANDLE = { knife: 0.01, bat: 0.1, axe: 0.08, pickaxe: 0.08, iaxe: 0.08, ipick: 0.08, machete: 0.01, hammer: 0.07 };
 
 // руки для предмета в руках: оружие держат двумя руками, холодное — кулаком за рукоять
@@ -1628,7 +1945,7 @@ export function makeFist(side, skin, sleeve) {
   return fromBaked(bakeParts(g, 0, 'skin'));
 }
 
-export const GUN_IDS = new Set(['pistol', 'smg', 'shotgun', 'rifle', 'asval', 'sniper', 'rpg', 'rpg_e', 'knife', 'bat', 'axe', 'pickaxe', 'iaxe', 'ipick', 'machete', 'hammer']);
+export const GUN_IDS = new Set(['pistol', 'smg', 'shotgun', 'rifle', 'qbz', 'asval', 'sniper', 'rpg', 'rpg_e', 'knife', 'bat', 'axe', 'pickaxe', 'iaxe', 'ipick', 'machete', 'hammer']);
 
 // иконки: рендер каждой модели в маленький canvas
 export function renderIcons(ids) {

@@ -1,6 +1,7 @@
 // Сборщик плоско-затенённой low-poly геометрии с цветами вершин.
 // Все объекты чанка сливаются в один меш — один draw call на чанк.
 import * as THREE from 'three';
+import { textures, TRIPLANAR } from './textures.js';
 
 const _c = new THREE.Color();
 const linCache = new Map();
@@ -26,9 +27,10 @@ export class MeshBuilder {
   // flat — без нормалей и с компактными цветами (вдвое меньше памяти); материал тогда нужен с flatShading:
   // нормаль грани видеокарта считает сама
   // данные сразу пишутся в растущие типизированные массивы (у flat цвет — 16 бит), без промежуточных JS-массивов
-  constructor(facet = 0, flat = false) {
-    this.facet = facet; this.k = 0; this.flat = flat;
-    this.len = 0; this.cap = 0; this.p = null; this.n = null; this.c = null;
+  // tagged — у каждой вершины ещё и метка материала (атрибут aKind: 0 — ткань, 1 — кожа, 2 — прочее), текущая — this.tag
+  constructor(facet = 0, flat = false, tagged = false) {
+    this.facet = facet; this.k = 0; this.flat = flat; this.tagged = tagged; this.tag = 0;
+    this.len = 0; this.cap = 0; this.p = null; this.n = null; this.c = null; this.t = null;
   }
   get empty() { return this.len === 0; }
 
@@ -39,6 +41,7 @@ export class MeshBuilder {
     const p = new Float32Array(cap), c = this.flat ? new Uint16Array(cap) : new Float32Array(cap);
     if (this.p) { p.set(this.p.subarray(0, this.len)); c.set(this.c.subarray(0, this.len)); }
     if (!this.flat) { const n = new Float32Array(cap); if (this.n) n.set(this.n.subarray(0, this.len)); this.n = n; }
+    if (this.tagged) { const t = new Uint8Array(cap / 3); if (this.t) t.set(this.t.subarray(0, this.len / 3)); this.t = t; }
     this.p = p; this.c = c; this.cap = cap;
   }
 
@@ -49,6 +52,7 @@ export class MeshBuilder {
       r = Math.min(65535, Math.round(r * 65535)); g = Math.min(65535, Math.round(g * 65535)); b = Math.min(65535, Math.round(b * 65535));
     }
     c[o] = r; c[o + 1] = g; c[o + 2] = b; c[o + 3] = r; c[o + 4] = g; c[o + 5] = b; c[o + 6] = r; c[o + 7] = g; c[o + 8] = b;
+    if (this.t) { const v = o / 3; this.t[v] = this.t[v + 1] = this.t[v + 2] = this.tag; }
   }
 
   tri(ax, ay, az, bx, by, bz, cx, cy, cz, col) {
@@ -177,26 +181,36 @@ export class MeshBuilder {
 
   // сетка колец (замкнутых контуров) с гладкими нормалями: нормаль вершины — среднее нормалей соседних граней.
   // Торцы плоские; при скруглённых торцах (roundEnds) крайние кольца плавно переходят в торец
-  smoothRings(R, ctr, col, roundEnds) {
+  smoothRings(R, ctr, col, roundEnds, caps = true) {
     const K = R.length, n = R[0].length;
     const N = R.map(r => r.map(() => [0, 0, 0]));
-    const out = (nx, ny, nz, a, b) => (nx * ((a[0] + b[0]) / 2 - ctr[0]) + ny * ((a[1] + b[1]) / 2 - ctr[1]) + nz * ((a[2] + b[2]) / 2 - ctr[2])) >= 0;
+    // нормаль четырёхугольника — векторное произведение диагоналей. Обход колец у всей сетки одинаковый,
+    // поэтому «наружу» решается один раз — по самой крупной грани среднего ряда (у длинных трубок
+    // проверка «от центра» у концов ненадёжна)
     const QN = [];
+    let best = -1, sign = 1;
     for (let k = 0; k + 1 < K; k++) {
       const row = [];
       for (let i = 0; i < n; i++) {
         const j = (i + 1) % n, a = R[k][i], b = R[k][j], e = R[k + 1][j], f = R[k + 1][i];
-        // нормаль четырёхугольника — векторное произведение диагоналей, наружу от центра
         const ux = e[0] - a[0], uy = e[1] - a[1], uz = e[2] - a[2], vx = f[0] - b[0], vy = f[1] - b[1], vz = f[2] - b[2];
-        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
         const l = Math.hypot(nx, ny, nz);
         if (l < 1e-14) { row.push(null); continue; }
-        nx /= l; ny /= l; nz /= l;
-        if (!out(nx, ny, nz, a, e)) { nx = -nx; ny = -ny; nz = -nz; }
-        row.push([nx, ny, nz]);
-        for (const v of [N[k][i], N[k][j], N[k + 1][j], N[k + 1][i]]) { v[0] += nx; v[1] += ny; v[2] += nz; }
+        row.push([nx / l, ny / l, nz / l]);
+        if (k === (K - 1) >> 1 && l > best) {
+          best = l;
+          sign = nx * ((a[0] + e[0]) / 2 - ctr[0]) + ny * ((a[1] + e[1]) / 2 - ctr[1]) + nz * ((a[2] + e[2]) / 2 - ctr[2]) >= 0 ? 1 : -1;
+        }
       }
       QN.push(row);
+    }
+    for (let k = 0; k + 1 < K; k++) for (let i = 0; i < n; i++) {
+      const q = QN[k][i];
+      if (!q) continue;
+      q[0] *= sign; q[1] *= sign; q[2] *= sign;
+      const j = (i + 1) % n;
+      for (const v of [N[k][i], N[k][j], N[k + 1][j], N[k + 1][i]]) { v[0] += q[0]; v[1] += q[1]; v[2] += q[2]; }
     }
     // нормаль торца (формула Ньюэлла), наружу
     const capN = (r, other) => {
@@ -208,8 +222,8 @@ export class MeshBuilder {
       const d = (r[0][0] - other[0][0]) * x + (r[0][1] - other[0][1]) * y + (r[0][2] - other[0][2]) * z;
       return d >= 0 ? [x, y, z] : [-x, -y, -z];
     };
-    const caps = [[R[0], capN(R[0], R[1]), 0], [R[K - 1], capN(R[K - 1], R[K - 2]), K - 1]];
-    if (roundEnds) for (const [, cn, k] of caps) for (const v of N[k]) { v[0] += cn[0]; v[1] += cn[1]; v[2] += cn[2]; }
+    const ends = [[R[0], capN(R[0], R[1]), 0], [R[K - 1], capN(R[K - 1], R[K - 2]), K - 1]];
+    if (roundEnds) for (const [, cn, k] of ends) for (const v of N[k]) { v[0] += cn[0]; v[1] += cn[1]; v[2] += cn[2]; }
     for (const r of N) for (const v of r) { const l = Math.hypot(v[0], v[1], v[2]) || 1; v[0] /= l; v[1] /= l; v[2] /= l; }
     for (let k = 0; k + 1 < K; k++) for (let i = 0; i < n; i++) {
       const qn = QN[k][i];
@@ -223,13 +237,65 @@ export class MeshBuilder {
       if (fx * qn[0] + fy * qn[1] + fz * qn[2] >= 0) { this.triA(a, b, e, na, nb, ne, col); this.triA(a, e, f, na, ne, nf, col); }
       else { this.triA(a, e, b, na, ne, nb, col); this.triA(a, f, e, na, nf, ne, col); }
     }
-    for (const [r, cn] of caps) for (let i = 1; i + 1 < n; i++) {
+    if (caps) for (const [r, cn] of ends) for (let i = 1; i + 1 < n; i++) {
       const a = r[0], b = r[i], e = r[i + 1];
       const fx = (b[1] - a[1]) * (e[2] - a[2]) - (b[2] - a[2]) * (e[1] - a[1]);
       const fy = (b[2] - a[2]) * (e[0] - a[0]) - (b[0] - a[0]) * (e[2] - a[2]);
       const fz = (b[0] - a[0]) * (e[1] - a[1]) - (b[1] - a[1]) * (e[0] - a[0]);
       if (fx * cn[0] + fy * cn[1] + fz * cn[2] >= 0) this.triA(a, b, e, cn, cn, cn, col); else this.triA(a, e, b, cn, cn, cn, col);
     }
+  }
+
+  // эллипсоид (суперэллипсоид при o.k < 1 — ближе к бруску) с центром (cx, cy, cz) и гладким затенением.
+  // o.tx/o.tz — масштаб сечения вверху (сужение), o.rx/o.ry/o.rz — поворот, o.q — точек по кругу, o.a — колец
+  ellip(cx, cy, cz, w, h, d, col, o = {}) {
+    const k = o.k ?? 1, Q = o.q ?? 18, A = o.a ?? 11, tx = o.tx ?? 1, tz = o.tz ?? 1;
+    const f = v => Math.sign(v) * Math.abs(v) ** k;
+    let rot = null;
+    if (o.rx || o.ry || o.rz) { _re.set(o.rx || 0, o.ry || 0, o.rz || 0); rot = _rm.makeRotationFromEuler(_re); }
+    const R = [];
+    for (let i = 0; i < A; i++) {
+      const phi = Math.PI * i / (A - 1), sy = -Math.cos(phi), sr = Math.sin(phi), t = (sy + 1) / 2;
+      const kx = 1 + (tx - 1) * t, kz = 1 + (tz - 1) * t, ring = [];
+      for (let j = 0; j < Q; j++) {
+        const th = 2 * Math.PI * j / Q;
+        _v.set(f(Math.cos(th) * sr) * w / 2 * kx, f(sy) * h / 2, f(Math.sin(th) * sr) * d / 2 * kz);
+        if (rot) _v.applyMatrix4(rot);
+        ring.push([_v.x + cx, _v.y + cy, _v.z + cz]);
+      }
+      R.push(ring);
+    }
+    this.smoothRings(R, [cx, cy, cz], col, false, false);
+  }
+
+  // трубка от a до b (точки [x, y, z]) с радиусами ra → rb и скруглёнными концами: руки, ноги, шея, пальцы.
+  // o.sx/o.sz — овал сечения (по осям, близким к x и z), o.bulge/o.bp — утолщение (мышца) и его место 0..1,
+  // o.q — точек по кругу, o.n — колец вдоль, o.c — колец на скруглении конца
+  tube(a, b, ra, rb, col, o = {}) {
+    const Q = o.q ?? 14, NB = o.n ?? 6, NC = o.c ?? 3, sx = o.sx ?? 1, sz = o.sz ?? 1, bulge = o.bulge ?? 0, bp = o.bp ?? 0.4;
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], L = Math.hypot(ux, uy, uz) || 1e-6;
+    const u = [ux / L, uy / L, uz / L];
+    // поперечные оси: v1 ближе к x, v2 ближе к z (для вертикальных конечностей — ровно x и z)
+    let ref = [0, 0, 1];
+    if (Math.abs(u[2]) > 0.9) ref = [0, 1, 0];
+    let v1 = [u[1] * ref[2] - u[2] * ref[1], u[2] * ref[0] - u[0] * ref[2], u[0] * ref[1] - u[1] * ref[0]];
+    const l1 = Math.hypot(...v1); v1 = v1.map(v => v / l1);
+    if (v1[0] < 0 || (Math.abs(u[2]) > 0.9 && v1[1] < 0)) v1 = v1.map(v => -v);
+    const v2 = [v1[1] * u[2] - v1[2] * u[1], v1[2] * u[0] - v1[0] * u[2], v1[0] * u[1] - v1[1] * u[0]];
+    const rAt = t => (ra + (rb - ra) * t) * (1 + bulge * Math.exp(-(((t - bp) / 0.3) ** 2)));
+    const ring = (along, r) => {
+      const c = [a[0] + u[0] * along, a[1] + u[1] * along, a[2] + u[2] * along], out = [];
+      for (let j = 0; j < Q; j++) {
+        const th = 2 * Math.PI * j / Q, cs = Math.cos(th) * r * sx, sn = Math.sin(th) * r * sz;
+        out.push([c[0] + v1[0] * cs + v2[0] * sn, c[1] + v1[1] * cs + v2[1] * sn, c[2] + v1[2] * cs + v2[2] * sn]);
+      }
+      return out;
+    };
+    const R = [];
+    for (let i = 0; i <= NC; i++) { const ph = Math.PI / 2 * (1 - i / NC); R.push(ring(-Math.sin(ph) * ra, Math.cos(ph) * rAt(0))); }
+    for (let i = 1; i < NB; i++) { const t = i / NB; R.push(ring(t * L, rAt(t))); }
+    for (let i = 0; i <= NC; i++) { const ph = Math.PI / 2 * i / NC; R.push(ring(L + Math.sin(ph) * rb, Math.cos(ph) * rAt(1))); }
+    this.smoothRings(R, [a[0] + u[0] * L / 2, a[1] + u[1] * L / 2, a[2] + u[2] * L / 2], col, false, false);
   }
 
   // треугольник выпуклого тела: разворачивается наружу от ctr, яркость — по наклону грани
@@ -327,16 +393,71 @@ export class MeshBuilder {
     } else {
       g.setAttribute('normal', new THREE.BufferAttribute(this.n ? this.n.slice(0, L) : new Float32Array(0), 3));
       g.setAttribute('color', new THREE.BufferAttribute(this.c ? this.c.slice(0, L) : new Float32Array(0), 3));
+      if (this.tagged) g.setAttribute('aKind', new THREE.BufferAttribute(this.t ? this.t.slice(0, L / 3) : new Uint8Array(0), 1));
     }
     g.computeBoundingSphere();
     return g;
   }
 }
 
-// «Текстура» без картинок: мелкое зерно по мировым координатам, гаснет с расстоянием
-export function addSurfaceDetail(material, scale = 3, amp = 0.09) {
+// кирпич и доски по цвету вершины (линейный): кирпич — красно-коричневый, дерево — оранжево-коричневое
+const PATTERNS = `
+  #ifdef USE_COLOR
+  {
+    vec3 c = vColor;
+    float rg = c.r / max(c.g, 0.002), gb = c.g / max(c.b, 0.002);
+    float vert = 1.0 - smoothstep(0.3, 0.5, abs(wn.y));
+    vec2 uv = abs(wn.x) > abs(wn.z) ? vWPos.zy : vWPos.xy;
+    float near = 1.0 - smoothstep(30.0, 70.0, length(vViewPosition));
+    if (vert > 0.0 && rg > 1.6 && rg < 4.2 && gb > 1.1 && gb < 1.85) {
+      // кладка: кирпич 25 × 7,5 см, перевязка со сдвигом в полкирпича, швы 1 см
+      float rv = uv.y / 0.075, row = floor(rv), u = uv.x / 0.25 + mod(row, 2.0) * 0.5;
+      vec2 f = vec2(fract(u), fract(rv)), aa = fwidth(vec2(u, rv)) * 1.5;
+      float brick = smoothstep(0.04, 0.04 + aa.x, min(f.x, 1.0 - f.x)) * smoothstep(0.12, 0.12 + aa.y, min(f.y, 1.0 - f.y));
+      float h = fract(sin(dot(vec2(floor(u), row), vec2(12.9898, 78.233))) * 43758.5453);
+      vec3 bc = diffuseColor.rgb * (0.84 + 0.3 * h), mc = mix(diffuseColor.rgb, vec3(0.4, 0.38, 0.35), 0.65);
+      float k = vert * near * (1.0 - smoothstep(0.35, 0.7, max(aa.x, aa.y)));
+      diffuseColor.rgb = mix(diffuseColor.rgb, mix(mc, bc, brick), k);
+    } else if (rg > 1.7 && rg < 4.0 && gb >= 1.85 && gb < 4.5) {
+      // доски 16 см: на стенах вдоль, на полу — вдоль x; у каждой свой тон и волокна
+      vec2 p = vert > 0.5 ? uv : vWPos.xz;
+      float v = p.y / 0.16, fy = fract(v), aa = fwidth(v) * 1.5;
+      float seam = smoothstep(0.05, 0.05 + aa, min(fy, 1.0 - fy));
+      float h = fract(sin(floor(v) * 91.7) * 4375.5);
+      float grain = texture2D(tDetail, vec2(p.x * 0.25 + h, v * 0.31)).g;
+      vec3 wc = diffuseColor.rgb * (0.84 + 0.28 * h) * (0.86 + 0.28 * grain);
+      float k = near * (1.0 - smoothstep(0.3, 0.6, aa));
+      diffuseColor.rgb = mix(diffuseColor.rgb, wc * mix(0.55, 1.0, seam), k);
+    }
+  }
+  #endif`;
+
+// земля: трава (пучки, тон, выгоревшие пятна) и асфальт (зерно, трещины) — тоже по цвету вершины
+const GROUND = `
+  #ifdef USE_COLOR
+  {
+    vec3 c = vColor;
+    float mx = max(c.r, max(c.g, c.b)), sat = (mx - min(c.r, min(c.g, c.b))) / max(mx, 0.001);
+    float near = 1.0 - smoothstep(25.0, 70.0, length(vViewPosition));
+    if (c.g > c.r * 1.12 && c.g > c.b * 1.25) {
+      vec4 tuft = triTex(tDetail, vWPos + 2.3, wn, 2.2), blade = triTex(tDetail, vWPos + 5.1, wn, 6.5);
+      diffuseColor.rgb *= (0.84 + 0.32 * tuft.r) * mix(1.0, 0.72 + 0.55 * blade.g, near);
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.3, 1.12, 0.62), smoothstep(0.62, 0.9, big.b) * 0.55);
+    } else if (sat < 0.2 && mx < 0.1) {
+      vec4 a = triTex(tDetail, vWPos + 1.3, wn, 3.5), cr = triTex(tDetail, vWPos + 7.7, wn, 0.35);
+      diffuseColor.rgb *= mix(1.0, 0.8 + 0.4 * a.g, near) * (1.0 - smoothstep(0.2, 0.7, cr.a) * 0.55 * near);
+    }
+  }
+  #endif`;
+
+// детальная текстура поверхности (см. textures.js): крупные пятна, оттенки, зерно и трещины по мировым
+// координатам, трипланарно; мелкие детали гаснут с расстоянием. scale — плотность, amp — сила.
+// patterns: true — для построек (по цвету узнаются кирпич и дерево), 'ground' — для земли (трава, асфальт)
+export function addSurfaceDetail(material, scale = 3, amp = 0.09, patterns = false) {
+  const T = textures();
   material.onBeforeCompile = shader => {
     shader.uniforms.uDetail = { value: new THREE.Vector2(scale, amp) };
+    shader.uniforms.tDetail = { value: T.detail };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -349,17 +470,20 @@ export function addSurfaceDetail(material, scale = 3, amp = 0.09) {
       .replace('#include <common>', `#include <common>
         varying vec3 vWPos;
         uniform vec2 uDetail;
-        float dHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`)
+        uniform sampler2D tDetail;
+        ${TRIPLANAR}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
-          vec3 q = vWPos * uDetail.x + vec3(0.37, 0.11, 0.73);
-          float n1 = dHash(floor(q)) - 0.5;
-          float n2 = dHash(floor(q * 0.3) + 17.0) - 0.5;
-          float fade = 1.0 - smoothstep(20.0, 85.0, length(vViewPosition));
-          diffuseColor.rgb *= 1.0 + (n1 + n2 * 0.7) * uDetail.y * fade;
+          vec3 wn = normalize(cross(dFdx(vWPos), dFdy(vWPos)));
+          float fade = 1.0 - smoothstep(18.0, 80.0, length(vViewPosition));
+          vec4 big = triTex(tDetail, vWPos, wn, uDetail.x * 0.06);
+          vec4 fine = triTex(tDetail, vWPos + 0.37, wn, uDetail.x * 0.42);
+          float v = (big.r - 0.5) * 1.1 + (big.b - 0.5) * 0.9 + ((fine.g - 0.5) * 0.9 - fine.a * 0.7) * fade;
+          diffuseColor.rgb *= 1.0 + v * uDetail.y * 1.7;
+          ${patterns === 'ground' ? GROUND : patterns ? PATTERNS : ''}
         }`);
   };
-  material.customProgramCacheKey = () => 'detail_' + scale + '_' + amp;
+  material.customProgramCacheKey = () => 'detail2_' + scale + '_' + amp + (patterns ? '_p' : '');
   return material;
 }
 

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import * as C from './config.js';
 import { ITEMS } from './items.js';
 import { renderIcons, PLAYER_COLORS } from './models.js';
+import { loadGunModels } from './gunmodels.js';
 import { Input } from './input.js';
 import { Sfx } from './audio.js';
 import { UI, buildSettings } from './ui.js';
@@ -41,6 +42,8 @@ renderer.setSize(innerWidth, innerHeight);
 const input = new Input();
 const sfx = new Sfx();
 sfx.setVolume(prof.settings.volume);
+// готовые модели оружия нужны раньше иконок
+await loadGunModels();
 const icons = renderIcons(Object.keys(ITEMS));
 const ui = new UI(icons, sfx, canvas);
 let game = null;

@@ -50,8 +50,10 @@ export class ChunkRenderer {
     this.live = new Map();
     // геометрия чанков без нормалей (MeshBuilder flat) — нормаль грани считает видеокарта
     // рельеф гладкий: нормали вершин, цвета плавно смешаны
-    this.matTerrain = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true }), 3.2, 0.09);
+    this.matTerrain = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true }), 3.2, 0.1, 'ground');
     this.matObj = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 6, 0.07);
+    // постройки — с кирпичной кладкой и досками
+    this.matStruct = addSurfaceDetail(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 6, 0.07, true);
     this.matGlass = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, transparent: true, opacity: 0.38, depthWrite: false });
     this.group = new THREE.Group();
     game.scene.add(this.group);
@@ -173,7 +175,7 @@ export class ChunkRenderer {
     yield;
     this.addObjMesh(ch, nb, this.matObj);
     yield;
-    this.addObjMesh(ch, sb, this.matObj);
+    this.addObjMesh(ch, sb, this.matStruct);
     this.addObjMesh(ch, gb, this.matGlass);
   }
 

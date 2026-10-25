@@ -150,6 +150,7 @@ export class Sfx {
 
   gun(kind, pos) {
     if (!this.ctx) return;
+    if (kind === 'qbz') kind = 'rifle';
     if (this.sample(kind, pos, kind === 'asval' ? 14 : 25, kind === 'asval' ? 240 : 500, 0.9)) return;
     const o = this.out(pos, 25, 500);
     if (!o) return;
