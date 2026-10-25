@@ -1646,8 +1646,9 @@ const BUILD = {
 
 // готовые модели (assets/models): масштаб, сдвиг (прицельная линия — на 0,1 выше начала координат, как ждёт
 // прицеливание), подъём самых тёмных цветов, чтобы чёрный пластик и воронение не сливались в силуэт
-// и все они увеличены в GUN_K раз — в руках так нагляднее; прицельная линия при этом остаётся на 0,1
-export const GUN_K = 1.3;
+// и все они увеличены в GUN_K раз — от первого лица в натуральную величину они выглядят игрушечными;
+// прицельная линия при этом остаётся на 0,1. У других игроков в руках модель уменьшают обратно (game.js)
+export const GUN_K = 1.55;
 export const gunFitY = y => y * GUN_K - 0.1 * (GUN_K - 1);
 const GUN_FIT = {
   rifle: { s: 1, off: [0, -0.033, 0], lift: 0.006 },
@@ -1667,6 +1668,8 @@ function fittedGun(geo, f) {
   g.userData.shared = true;
   return { geo: g, glow: [], shiny: true };
 }
+
+export const FITTED_GUNS = new Set(Object.keys(GUN_FIT));
 
 const itemCache = new Map();
 export function itemModel(id) {

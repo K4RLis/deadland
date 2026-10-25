@@ -13,7 +13,7 @@ import { Weapons } from './weapons.js';
 import { Rockets } from './rockets.js';
 import { ZombieSim, ZombieViews, ZTYPES, ZT } from './zombies.js';
 import { ITEMS, makeItem, rollLoot, xpNeed, QUESTS, STATION_NAMES } from './items.js';
-import { makePlayerModel, animate, makeNameTag, itemModel, makeBag } from './models.js';
+import { makePlayerModel, animate, makeNameTag, itemModel, makeBag, FITTED_GUNS, GUN_K } from './models.js';
 import { smooth, clamp, angleLerp } from './rng.js';
 import { MeshBuilder, lin, mat } from './mesh.js';
 
@@ -1095,6 +1095,8 @@ export class Game {
         const im = itemModel(w);
         im.rotation.x = -Math.PI / 2;
         if (ITEMS[w].cat === 'block') im.scale.setScalar(2);
+        // готовые модели оружия увеличены для вида от первого лица — у других игроков почти натуральный размер
+        if (FITTED_GUNS.has(w)) im.scale.setScalar(1.12 / GUN_K);
         hand.add(im);
       }
     }
