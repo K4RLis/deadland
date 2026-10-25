@@ -1,5 +1,5 @@
 // Общие константы игры, биомы острова и уровни сложности.
-export const VERSION = '1.9.3';
+export const VERSION = '1.9.4';
 export const NET_PREFIX = 'mkrai-v1-';
 
 export const WORLD_SIZE = 3000;          // метров по каждой стороне
