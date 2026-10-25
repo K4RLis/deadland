@@ -1386,6 +1386,7 @@ export class Game {
   hitZombie(id, dmg, head, point) {
     this.fx.blood(point.x, point.y, point.z);
     this.ui.hitmarker(head);
+    if (head) this.sfx.headshot();
     this.toHost({ t: 'hitZ', id, d: Math.round(dmg) });
   }
 

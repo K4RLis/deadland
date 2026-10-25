@@ -5,9 +5,10 @@ import { VERSION } from './config.js';
 // Тишина в начале файла и слишком длинный хвост обрезаются при загрузке.
 const SAMPLE_FILES = {
   pistol: ['pistol.wav'], smg: ['smg.wav'], shotgun: ['shotgun.wav'], rifle: ['ak47.wav'], qbz: ['qbz.wav'],
-  asval: ['asval.wav'], sniper: ['sniper.mp3'], hurt: ['hurt.mp3'],
+  asval: ['asval.wav'], sniper: ['sniper.mp3'], hurt: ['hurt.mp3'], headshot: ['headshot.wav'],
 };
-const MAX_LEN = { sniper: 2.2, hurt: 1.2 };
+// у дробовика после выстрела — перезарядка цевьём и эхо
+const MAX_LEN = { sniper: 2.2, hurt: 1.2, shotgun: 2.2 };
 
 // убрать тишину перед звуком (порог 5% пика) и обрезать хвост длиннее maxLen с плавным затуханием
 function trimBuffer(ctx, buf, maxLen) {
@@ -222,6 +223,15 @@ export class Sfx {
     this.hurtT = now;
     if (this.sample('hurt', null, 1, 1, 0.85)) return;
     const o = this.out(null); this.tone(o.node, 'sawtooth', 220, 110, 0.18, 0.18); this.noiseBurst(o.node, 0.15, 700, 150, 1, 0.3);
+  }
+  // попадание в голову: один звук на выстрел, даже если в голову ушло несколько дробин
+  headshot() {
+    if (!this.ctx) return;
+    const now = performance.now();
+    if (now - (this.headT || -1e9) < 120) return;
+    this.headT = now;
+    if (this.sample('headshot', null, 1, 1, 0.8)) return;
+    const o = this.out(null); this.tone(o.node, 'square', 1800, 1400, 0.05, 0.08);
   }
   levelUp() { if (!this.ctx) return; const o = this.out(null); [523, 659, 784, 1046].forEach((f, i) => this.tone(o.node, 'triangle', f, f, 0.18, 0.15, i * 0.09)); }
   alarm() { if (!this.ctx) return; const o = this.out(null); for (let i = 0; i < 4; i++) { this.tone(o.node, 'sawtooth', 300, 600, 0.45, 0.12, i * 0.5); } }
