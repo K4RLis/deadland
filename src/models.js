@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { MeshBuilder, lin } from './mesh.js';
 import { gunGeo } from './gunmodels.js';
 import { characterMaterial } from './textures.js';
+import { riggedHand, rigReady, RIG_SKIN } from './riggedhand.js';
 
 const matCache = new Map();
 export function M(hex, emissive = 0) {
@@ -169,7 +170,7 @@ function bakeParts(g, facet = 0.06, shiny = false) {
   g.traverse(o => {
     if (!o.isMesh) return;
     const em = o.material.emissive;
-    if (em && (em.r || em.g || em.b)) {
+    if (o.userData.keep || (em && (em.r || em.g || em.b) && !o.material.map)) {
       const m = new THREE.Mesh(o.geometry, o.material);
       o.matrixWorld.decompose(m.position, m.quaternion, m.scale);
       glow.push(m);
@@ -1788,6 +1789,9 @@ const PHAL_R = [1, 0.93, 0.86];
 function hand(p, side, skin, pose) {
   const h = new THREE.Group();
   p.add(h);
+  // готовая кисть со скелетом и текстурами, если загрузилась
+  const rig = riggedHand(side, pose);
+  if (rig) { h.add(rig); return h; }
   const palm = mix(skin, 0xf0c2ac, 0.14), knuckle = mix(skin, 0xc4826c, 0.14), nail = mix(skin, 0xf8e2dc, 0.62), crease = mix(skin, 0x9a5a48, 0.16);
   // ладонь: к запястью уже и тоньше; невысокие подушки под пальцами, у большого пальца и у мизинца
   blob(h, 0.082, 0.027, 0.094, skin, 0, 0, 0, { k: 0.6, tx: 0.8, ty: 0.88 });
@@ -1838,28 +1842,34 @@ function wristOf(h) {
 function forearm(p, skin, sleeve, x, y, z, rx, ry) {
   const a = sub(p, x, y, z, rx, ry, 0);
   const cuff = dk(sleeve, 0.78), fold = dk(sleeve, 0.86);
-  blob(a, 0.06, 0.03, 0.07, skin, 0, 0, 0.01, { k: 0.8, tx: 0.92 });
-  const fa = new THREE.Mesh(coneGeo(0.0245, 0.033, 0.12), M(skin));
-  fa.scale.set(1.18, 0.82, 1);
-  fa.position.z = 0.0;
-  a.add(fa);
+  // у готовой кисти своё запястье — манжета рукава надевается прямо на его срез
+  const rig = rigReady(), o = rig ? -0.062 : 0;
+  // у тонкого запястья готовой кисти рукав уже
+  if (rig) a.scale.set(0.86, 0.86, 1);
+  if (!rig) {
+    blob(a, 0.06, 0.03, 0.07, skin, 0, 0, 0.01, { k: 0.8, tx: 0.92 });
+    const fa = new THREE.Mesh(coneGeo(0.0245, 0.033, 0.12), M(skin));
+    fa.scale.set(1.18, 0.82, 1);
+    fa.position.z = 0.0;
+    a.add(fa);
+  }
   const cf = new THREE.Mesh(coneGeo(0.039, 0.042, 0.04), M(cuff));
   cf.scale.set(1.12, 0.92, 1);
-  cf.position.z = 0.06;
+  cf.position.z = 0.06 + o;
   a.add(cf);
   const lip = new THREE.Mesh(foldGeo(0.039, 0.0055), M(cuff));
   lip.scale.set(1.12, 0.92, 1);
-  lip.position.z = 0.061;
+  lip.position.z = 0.061 + o;
   a.add(lip);
   const sl = new THREE.Mesh(coneGeo(0.043, 0.053, 0.4), M(sleeve));
   sl.scale.set(1.12, 0.94, 1);
-  sl.position.z = 0.095;
+  sl.position.z = 0.095 + o;
   a.add(sl);
   [[0.15, 0.12], [0.22, -0.16], [0.3, 0.1], [0.39, -0.08]].forEach(([fz, tilt], i) => {
     const r = 0.043 + (fz - 0.095) / 0.4 * 0.01;
     const f = new THREE.Mesh(foldGeo(r, 0.0042 + (i & 1) * 0.001), M(fold));
     f.scale.set(1.12, 0.94, 1);
-    f.position.z = fz;
+    f.position.z = fz + o;
     f.rotation.x = tilt;
     a.add(f);
   });
@@ -1872,6 +1882,7 @@ function gripHand(p, skin, sleeve, y, z, rake) {
   const h = hand(G, 1, skin, {
     curl: [[0.55, 0.85, 0.35], [1.45, 1.3, 0.55], [1.5, 1.3, 0.55], [1.5, 1.25, 0.5]], spread: 0.25,
     thumb: { yaw: 0.85, pitch: 0.55, roll: 1.25, c: [0.25, 0.35, 0.15] },
+    rt: { swing: -0.1, twist: -1.1, flex: [-0.1, 0.55, 0.45] },
   });
   h.position.set(0.033, -0.05, 0.016);
   basis(h, [0, -1, 0], [1, 0, 0], [0, 0, 1]);
@@ -1885,6 +1896,7 @@ function supportHand(p, skin, sleeve, y, z) {
   const h = hand(S, -1, skin, {
     curl: [[1.0, 0.75, 0.4], [1.05, 0.8, 0.4], [1.1, 0.8, 0.4], [1.15, 0.8, 0.4]], spread: 0.2,
     thumb: { yaw: 0.35, pitch: 0.05, roll: 1.0, c: [0, 0.15, 0.1] },
+    rt: { swing: 0.05, twist: -0.4, flex: [0.05, 0.25, 0.2] },
   });
   h.position.set(-0.018, -0.012, 0.004);
   basis(h, [0, 0, -1], [0, -1, 0], [-1, 0, 0]);
@@ -1899,6 +1911,7 @@ function fistOnHandle(p, skin, sleeve, z) {
   const h = hand(Hd, 1, skin, {
     curl: [[1.35, 1.45, 0.75], [1.4, 1.5, 0.75], [1.45, 1.5, 0.75], [1.5, 1.45, 0.7]], spread: 0.15,
     thumb: { yaw: 0.6, pitch: 0.75, roll: 1.2, c: [0.3, 0.45, 0.3] },
+    rt: { swing: -0.15, twist: -1.3, flex: [-0.15, 0.85, 1.1] },
   });
   h.position.set(0.03, 0.006, 0);
   basis(h, [0, 0, 1], [1, 0, 0], [0, 1, 0]);
@@ -1913,6 +1926,7 @@ function palmHand(p, skin, sleeve, y) {
   const h = hand(P, 1, skin, {
     curl: [[0.18, 0.22, 0.1], [0.15, 0.2, 0.1], [0.2, 0.22, 0.1], [0.28, 0.25, 0.12]], spread: 1,
     thumb: { yaw: 0.65, pitch: 0.25, roll: 1.0, c: [0, 0.1, 0.1] },
+    rt: { swing: 0, twist: 0, flex: [0, 0.1, 0.1] },
   });
   h.position.set(0, -0.006, -0.005);
   basis(h, [-1, 0, 0], [0, -1, 0], [0, 0, 1]);
@@ -1933,6 +1947,7 @@ const VM_HANDLE = { knife: 0.01, bat: 0.1, axe: 0.08, pickaxe: 0.08, iaxe: 0.08,
 // руки для предмета в руках: оружие держат двумя руками, холодное — кулаком за рукоять
 export function makeViewArms(id, cat, skin, sleeve) {
   const g = new THREE.Group();
+  if (rigReady()) skin = RIG_SKIN;
   if (cat === 'gun') {
     const [y, z, rake] = VM_GRIP[id] || VM_GRIP.rifle;
     gripHand(g, skin, sleeve, y, z, rake);
@@ -1946,9 +1961,11 @@ export function makeViewArms(id, cat, skin, sleeve) {
 // кулак в стойке: пальцы сжаты в ладонь, большой палец поверх среднего и указательного, костяшки вперёд
 export function makeFist(side, skin, sleeve) {
   const g = new THREE.Group();
+  if (rigReady()) skin = RIG_SKIN;
   const h = hand(g, side, skin, {
     curl: [[1.5, 1.75, 0.95], [1.55, 1.8, 0.95], [1.55, 1.75, 0.95], [1.5, 1.7, 0.9]], spread: 0.1,
     thumb: { yaw: 0.15, pitch: 0.55, roll: 1.35, c: [0.25, 0.95, 0.7] },
+    rt: { swing: -0.18, twist: -1.42, flex: [-0.2, 1, 1.44] },
   });
   h.scale.setScalar(1.15);
   // сжатая кисть ниже раскрытой — поднимаем, чтобы в стойке кулаки были видны целиком
