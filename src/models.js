@@ -1672,8 +1672,110 @@ function fittedGun(geo, f) {
 
 export const FITTED_GUNS = new Set(Object.keys(GUN_FIT));
 
+// ---------- прицелы ----------
+// В натуральную величину: низ крепления на y = 0, оптическая ось вдоль z на высоте SIGHT_H, середина — z = 0
+const SIGHT_H = { reddot: 0.026, scope2: 0.03, scope4: 0.034 };
+const SIGHT_L = { reddot: 0.05, scope2: 0.11, scope4: 0.15 };
+// стекло коллиматора — полупрозрачное, сквозь него целятся
+const GLASS = new THREE.MeshStandardMaterial({ color: 0x9cc4e8, transparent: true, opacity: 0.16, roughness: 0.05, metalness: 0.3, depthWrite: false });
+const SB = 0x1a1c1e, SB2 = 0x2a2d30;
+
+// трубка из n планок вдоль z: внутри пусто — сквозь неё видно
+function tubeZ(g, r, t, len, hex, y, z, n = 16) {
+  const w = 2 * r * Math.tan(Math.PI / n) + 0.0008;
+  for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; part(g, w, t, len, hex, Math.sin(a) * r, y + Math.cos(a) * r, z, 0, 0, -a); }
+}
+
+function glass(g, r, y, z) {
+  const m = new THREE.Mesh(CYL12, GLASS);
+  m.scale.set(r, 0.0015, r); m.rotation.x = PI2; m.position.set(0, y, z);
+  m.userData.keep = true;
+  g.add(m);
+}
+
+// коллиматор: короткая открытая трубка на стойке, барабанчики яркости и поправок, красная точка у переднего стекла
+function reddotModel(g) {
+  const H = SIGHT_H.reddot, r = 0.0135;
+  rp(g, 0.024, 0.008, 0.044, SB2, 0, 0.004, 0, { c: 0.25 });
+  part(g, 0.03, 0.006, 0.01, SB, 0, 0.003, 0.012);
+  cyl(g, 0.0035, 0.004, STEEL2, 0.0165, 0.003, 0.012, 0, 0, PI2);
+  rp(g, 0.018, H - r - 0.004, 0.034, SB2, 0, 0.006 + (H - r - 0.004) / 2, 0.002, { c: 0.3 });
+  tubeZ(g, r, 0.0035, 0.044, SB2, H, 0);
+  tubeZ(g, r + 0.0018, 0.003, 0.007, SB, H, -0.0215);
+  tubeZ(g, r + 0.0012, 0.003, 0.005, SB, H, 0.0215);
+  cyl(g, 0.0062, 0.008, SB, r + 0.004, H, 0.004, 0, 0, PI2);
+  cyl(g, 0.0055, 0.006, SB, 0, H + r + 0.004, 0.004);
+  glass(g, r, H, -0.019);
+  part(g, 0.0015, 0.0015, 0.0015, 0xff2a20, 0, H, -0.017, 0, 0, 0, ICO, 0xff2a20);
+}
+
+// оптика: труба на двух кольцах, раструб объектива, окуляр с наглазником, барабанчики; у 4× — оптоволокно сверху
+function scopeModel(g, kind) {
+  const H = SIGHT_H[kind], L = SIGHT_L[kind], big = kind === 'scope4';
+  const r = big ? 0.0125 : 0.011, ro = big ? 0.02 : 0.016, re = big ? 0.0175 : 0.0155;
+  rp(g, 0.024, 0.008, L * 0.6, SB2, 0, 0.004, 0, { c: 0.25 });
+  for (const z of [-L * 0.18, L * 0.18]) {
+    part(g, 0.014, H - r - 0.004, 0.012, SB, 0, 0.006 + (H - r - 0.004) / 2, z);
+    cylZ(g, r + 0.0025, 0.012, SB, 0, H, z, CYL12);
+    cyl(g, 0.0025, 0.004, STEEL2, 0.009, 0.006, z, 0, 0, PI2);
+  }
+  cylZ(g, r, L * 0.5, SB2, 0, H, 0, CYL12);
+  part(g, ro, L * 0.16, ro, SB2, 0, H, -L * 0.33, PI2, 0, 0, FRUST);
+  cylZ(g, ro, L * 0.1, SB2, 0, H, -L * 0.46, CYL12);
+  cylZ(g, ro + 0.001, 0.004, SB, 0, H, -L * 0.5 + 0.002, CYL12);
+  part(g, ro * 0.86, 0.003, ro * 0.86, 0x5a8ac0, 0, H, -L * 0.51, PI2, 0, 0, CYL12, 0x102850);
+  part(g, re, L * 0.14, re, SB2, 0, H, L * 0.31, -PI2, 0, 0, FRUST);
+  cylZ(g, re, L * 0.1, 0x141414, 0, H, L * 0.43, CYL12);
+  part(g, re * 0.7, 0.003, re * 0.7, 0x5a8ac0, 0, H, L * 0.48, PI2, 0, 0, CYL12, 0x102850);
+  for (let i = 0; i < 5; i++) cylZ(g, re + 0.0008, 0.002, SB, 0, H, L * 0.36 + i * 0.004, CYL12);
+  cyl(g, 0.0065, 0.009, SB, 0, H + r + 0.004, -0.004);
+  cyl(g, 0.0065, 0.009, SB, r + 0.004, H, -0.004, 0, 0, PI2);
+  if (big) {
+    part(g, 0.006, 0.004, L * 0.34, SB, 0, H + r + 0.002, -L * 0.12);
+    cylZ(g, 0.0022, L * 0.3, 0x3aa050, 0, H + r + 0.0055, -L * 0.12, CYL12);
+    cylZ(g, ro + 0.0012, L * 0.12, SB, 0, H, -L * 0.57, CYL12);
+  }
+}
+BUILD.reddot = g => reddotModel(g);
+BUILD.scope2 = g => scopeModel(g, 'scope2');
+BUILD.scope4 = g => scopeModel(g, 'scope4');
+
+// место под прицел на оружии (система модели в руках, у готовых моделей — уже увеличенной):
+// [середина по z, верх планки или крышки, наименьшая высота оси — выше целика и мушки]
+const MOUNT = { pistol: [-0.055, 0.053, 0.08], smg: [-0.06, 0.049, 0.104], rifle: [-0.17, 0.072, 0.124], qbz: [-0.27, 0.038, 0.132], asval: [-0.16, 0.091, 0.12] };
+
+// где ось прицела и задний край на оружии: { y, back } в системе модели
+export function sightAt(gun, sight) {
+  const m = MOUNT[gun];
+  if (!m || !SIGHT_H[sight]) return null;
+  const k = FITTED_GUNS.has(gun) ? GUN_K : 1;
+  return { y: Math.max(m[2], m[1] + SIGHT_H[sight] * k), back: m[0] + SIGHT_L[sight] * k / 2, k };
+}
+
 const itemCache = new Map();
 export function itemModel(id) {
+  // оружие с прицелом: «rifle+scope4» — прицел на стойке нужной высоты поверх крышки или планки
+  const [gun, sight] = id.split('+');
+  if (sight) {
+    const out = itemModel(gun), at = sightAt(gun, sight);
+    if (!at) return out;
+    const [mz, my] = MOUNT[gun], rise = Math.max(0, at.y - SIGHT_H[sight] * at.k - my);
+    const S = itemModel(sight);
+    S.scale.setScalar(at.k);
+    S.position.set(0, my + rise, mz);
+    out.add(S);
+    if (rise > 0.002) {
+      let c = itemCache.get(id);
+      if (!c) {
+        const R = new THREE.Group();
+        rp(R, 0.02 * at.k, rise, SIGHT_L[sight] * at.k * 0.45, SB2, 0, my + rise / 2, mz, { c: 0.2 });
+        c = bakeParts(R, 0.04, true);
+        itemCache.set(id, c);
+      }
+      out.add(fromBaked(c));
+    }
+    return out;
+  }
   const key = BUILD[id] || GUN_FIT[id] ? id : 'scrap';
   let c = itemCache.get(key);
   if (!c) {
@@ -1893,18 +1995,22 @@ function gripHand(p, skin, sleeve, y, z, rake, k = 1) {
 }
 
 // левая кисть под цевьём: ладонь снизу-слева, пальцы обхватывают правую сторону, большой палец вдоль левой
-function supportHand(p, skin, sleeve, y, z, k = 1) {
+function supportHand(p, skin, sleeve, y, z, k = 1, guard = GUARD_AK) {
   const S = sub(p, 0, y, z);
   S.scale.setScalar(k);
+  // на широком цевье пальцы раскрыты сильнее — иначе кончики уходят внутрь
+  const o = rigReady() ? Math.max(0, guard[1] - GUARD_AK[1]) * 40 : 0;
   const h = hand(S, -1, skin, {
-    curl: [[1.0, 0.75, 0.4], [1.05, 0.8, 0.4], [1.1, 0.8, 0.4], [1.15, 0.8, 0.4]], spread: 0.2,
+    curl: [[1.0, 0.75, 0.4], [1.05, 0.8, 0.4], [1.1, 0.8, 0.4], [1.15, 0.8, 0.4]].map(c => [c[0] - o * 0.3, c[1] - o, c[2] - o * 0.5]), spread: 0.2,
     thumb: { yaw: 0.35, pitch: 0.05, roll: 1.0, c: [0, 0.15, 0.1] },
     rt: { swing: 0.05, twist: -0.4, flex: [0.05, 0.25, 0.2] },
   });
   if (rigReady()) {
     // готовая кисть: ладонь под нижним левым углом цевья, пальцы вправо-вперёд-вверх обхватывают правый бок,
     // большой палец вдоль левого — его и видно от глаза; запястье согнуто, предплечье уходит вниз-влево
-    h.position.set(-0.0104, -0.0021, -0.0067);
+    // подобрана под цевьё АК; на другом цевье кисть сдвигается к его нижнему левому углу
+    const dx = -(guard[1] - GUARD_AK[1]), dy = guard[0] - GUARD_AK[0];
+    h.position.set(-0.0104 + dx, -0.0021 + dy, -0.0067);
     basis(h, [-0.64, 0.414, -0.647], [-0.035, -0.857, -0.514], [-0.767, -0.307, 0.563]);
     const w = wristOf(h);
     forearm(S, skin, sleeve, w.x, w.y, w.z, 1.0, -0.5);
@@ -1964,6 +2070,9 @@ for (const id in GUN_FIT) {
   VM_GRIP[id] = [gunFitY(gr[0]), gr[1] * GUN_K, gr[2]];
   VM_SUPPORT[id] = [gunFitY(sp[0]), sp[1] * GUN_K];
 }
+// цевьё у левой кисти: [нижняя грань, полуширина] в системе кисти (после увеличения k)
+const GUARD_AK = [0.0067, 0.0156];
+const VM_GUARD = { smg: [0.0104, 0.0204], shotgun: [0.0104, 0.0185], qbz: [0.0104, 0.0228], asval: [-0.0098, 0.0222], sniper: [0.0111, 0.0197], rpg: [0.0111, 0.022], rpg_e: [0.0111, 0.022] };
 const VM_HANDLE = { knife: 0.01, bat: 0.1, axe: 0.08, pickaxe: 0.08, iaxe: 0.08, ipick: 0.08, machete: 0.01, hammer: 0.07 };
 
 // руки для предмета в руках: оружие держат двумя руками, холодное — кулаком за рукоять
@@ -1976,7 +2085,7 @@ export function makeViewArms(id, cat, skin, sleeve) {
     const [y, z, rake] = VM_GRIP[id] || VM_GRIP.rifle, k = !rigReady() ? 1 : FITTED_GUNS.has(id) ? GUN_K : 1.35;
     gripHand(g, skin, sleeve, y, z, rake, k);
     const sp = VM_SUPPORT[id];
-    if (sp) supportHand(g, skin, sleeve, sp[0], sp[1], k);
+    if (sp) supportHand(g, skin, sleeve, sp[0], sp[1], k, VM_GUARD[id]);
   } else if (cat === 'melee') fistOnHandle(g, skin, sleeve, VM_HANDLE[id] ?? 0.03, rigReady() ? 1.25 : 1);
   else palmHand(g, skin, sleeve, cat === 'block' ? -0.15 : -0.065);
   return fromBaked(bakeParts(g, 0, 'skin'));
@@ -2018,8 +2127,8 @@ export function renderIcons(ids) {
   const box = new THREE.Box3(), v = new THREE.Vector3(), c = new THREE.Vector3();
   for (const id of ids) {
     const m = itemModel(id);
-    if (GUN_IDS.has(id)) {
-      // ствол вправо, лёгкий наклон к камере
+    if (GUN_IDS.has(id) || SIGHT_H[id]) {
+      // ствол (или прицел) вправо, лёгкий наклон к камере
       m.rotation.set(0, -Math.PI / 2, 0);
       const wrap = new THREE.Group();
       wrap.add(m);

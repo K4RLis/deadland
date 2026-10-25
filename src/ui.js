@@ -6,6 +6,8 @@ import { BLOCK_TYPES } from './blocks.js';
 import { ZTYPES } from './zombies.js';
 import { runCommand, complete, describe } from './console.js';
 
+// значок прицела на слоте оружия
+const SIGHT_TAG = { reddot: '◉', scope2: '2×', scope4: '4×' };
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const hex = n => '#' + n.toString(16).padStart(6, '0');
@@ -383,11 +385,15 @@ export class UI {
     requestAnimationFrame(() => { h.style.transition = 'opacity 0.25s'; h.style.opacity = 0; });
   }
 
-  setScope(on) {
-    if (this._scope === on) return;
-    this._scope = on;
-    $('scope').style.display = on ? 'block' : 'none';
-    $('crosshair').style.display = on ? 'none' : '';
+  // вид в оптику: kind — 'sniper' (снайперка, РПГ), 'x2', 'x4' или null
+  setScope(kind) {
+    kind = kind || null;
+    if (this._scope === kind) return;
+    this._scope = kind;
+    const el = $('scope');
+    el.className = kind || '';
+    el.style.display = kind ? 'block' : 'none';
+    $('crosshair').style.display = kind ? 'none' : '';
   }
 
   // ---------- HUD ----------
@@ -408,6 +414,8 @@ export class UI {
     const def = ITEMS[it.id];
     let h = `<img src="${this.icons[it.id] || ''}">`;
     if (key) h += `<span class="k">${key}</span>`;
+    // значок прицела на оружии
+    if (it.sight) h += `<span class="sg">${SIGHT_TAG[it.sight] || ''}</span>`;
     if (def.cat === 'gun') h += `<span class="n">${it.ammo}</span><span class="am"><i style="width:${Math.round(it.ammo / def.mag * 100)}%"></i></span>`;
     else if (def.cat === 'armor') h += `<span class="am dur"><i style="width:${Math.round(Math.max(0, (it.dur ?? def.dur) / def.dur) * 100)}%"></i></span>`;
     else if (it.n > 1) h += `<span class="n">${it.n}</span>`;
@@ -759,7 +767,12 @@ export class UI {
     }
     if (!it) return;
     if (shift) { this.quickTransfer(i); return; }
-    if (ctrl) { if (inv.split(i)) this.sfx.click(); return; }
+    if (ctrl) {
+      // у оружия с прицелом Ctrl+клик снимает прицел
+      if (it.sight) { if (inv.detachSight(i)) this.sfx.click(); else this.toast('Рюкзак полон'); return; }
+      if (inv.split(i)) this.sfx.click();
+      return;
+    }
     this.setPicked(i);
   }
 
@@ -815,7 +828,9 @@ export class UI {
     }
     const def = ITEMS[it.id];
     let h = `<b>${esc(def.name)}${it.n > 1 ? ' ×' + it.n : ''}</b><div class="c">${CAT_NAMES[def.cat] || ''}</div>`;
-    if (def.cat === 'gun') h += `Урон ${def.dmg}${def.pellets ? '×' + def.pellets : ''} · магазин ${def.mag}<br>Патроны: ${esc(ITEMS[def.ammo].name)}<br>В магазине: ${it.ammo}`;
+    if (def.cat === 'gun') h += `Урон ${def.dmg}${def.pellets ? '×' + def.pellets : ''} · магазин ${def.mag}<br>Патроны: ${esc(ITEMS[def.ammo].name)}<br>В магазине: ${it.ammo}`
+      + (it.sight ? `<br>Прицел: ${esc(ITEMS[it.sight].name)}` : def.rail ? '<br>Можно поставить прицел' : '');
+    else if (def.cat === 'sight') h += def.scope ? `Увеличение ${def.zoom}×` : 'Без увеличения';
     else if (def.cat === 'melee') h += `Урон ${def.dmg}`;
     else if (def.cat === 'armor') h += `${SLOT_NAMES[def.slot]} · защита ${Math.round(def.armor * 100)}%<br>Прочность ${Math.ceil(Math.max(0, it.dur ?? def.dur))} / ${def.dur}`;
     else if (def.cat === 'food') h += [def.food ? `Сытость ${def.food > 0 ? '+' : ''}${def.food}` : '', def.water ? `Вода ${def.water > 0 ? '+' : ''}${def.water}` : '', def.heal ? `Здоровье +${def.heal}` : ''].filter(Boolean).join(' · ');
@@ -824,7 +839,7 @@ export class UI {
     if (def.desc) h += `<br>${esc(def.desc)}`;
     const keys = s.dataset.src === 'cont'
       ? 'клик или 1–8 — забрать'
-      : (def.cat === 'food' || def.cat === 'med' ? 'ПКМ или двойной клик — использовать · ' : def.cat === 'armor' ? (+s.dataset.i >= INV_SIZE ? 'ПКМ, двойной клик или Shift+клик — снять · ' : 'ПКМ, двойной клик или Shift+клик — надеть · ') : '') + '1–8 — в хотбар · Q — выбросить · Shift+клик — переложить' + (it.n > 1 ? ' · Ctrl+клик — разделить' : '');
+      : (def.cat === 'sight' ? 'Перетащи на пистолет, ПП или автомат · ПКМ — на оружие в руках · ' : it.sight ? 'Ctrl+клик — снять прицел · ' : def.cat === 'food' || def.cat === 'med' ? 'ПКМ или двойной клик — использовать · ' : def.cat === 'armor' ? (+s.dataset.i >= INV_SIZE ? 'ПКМ, двойной клик или Shift+клик — снять · ' : 'ПКМ, двойной клик или Shift+клик — надеть · ') : '') + '1–8 — в хотбар · Q — выбросить · Shift+клик — переложить' + (it.n > 1 ? ' · Ctrl+клик — разделить' : '');
     h += `<div class="keys">${keys}</div>`;
     tip.innerHTML = h;
     tip.dataset.key = s.dataset.src + s.dataset.i + it.id + it.n;

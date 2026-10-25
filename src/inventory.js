@@ -1,5 +1,5 @@
 // Инвентарь: 8 слотов хотбара + 24 рюкзака.
-import { ITEMS, makeItem, ARMOR_CAP } from './items.js';
+import { ITEMS, makeItem, ARMOR_CAP, canMount } from './items.js';
 
 export const HOTBAR = 8;
 export const INV_SIZE = 32;
@@ -104,6 +104,14 @@ export class Inventory {
     if (a === b) return true;
     const A = this.slots[a], B = this.slots[b];
     if (!A) return true;
+    // прицел на оружие с планкой: снятый старый прицел встаёт на место нового
+    if (B && canMount(B.id, A.id)) {
+      const old = B.sight;
+      B.sight = A.id;
+      this.slots[a] = old ? makeItem(old, 1) : null;
+      this.changed();
+      return true;
+    }
     if (!this.fits(b, A) || !this.fits(a, B)) return false;
     if (B && B.id === A.id && ITEMS[A.id].stack > 1) {
       const st = ITEMS[A.id].stack;
@@ -113,6 +121,19 @@ export class Inventory {
     } else {
       this.slots[a] = B; this.slots[b] = A;
     }
+    this.changed();
+    return true;
+  }
+
+  // снять прицел с оружия в рюкзак (или на панель); false — некуда
+  detachSight(i) {
+    const s = this.slots[i];
+    if (!s || !s.sight) return false;
+    let t = this.target(s.sight, HOTBAR, INV_SIZE);
+    if (t < 0) t = this.target(s.sight, 0, HOTBAR);
+    if (t < 0) return false;
+    this.slots[t] = makeItem(s.sight, 1);
+    delete s.sight;
     this.changed();
     return true;
   }
@@ -192,7 +213,7 @@ export class Inventory {
 
   // сортировка рюкзака: склеить стопки и упорядочить по категориям
   sort() {
-    const ORDER = ['gun', 'melee', 'ammo', 'med', 'food', 'block', 'mat'];
+    const ORDER = ['gun', 'sight', 'melee', 'ammo', 'med', 'food', 'block', 'mat'];
     const items = [];
     for (let i = HOTBAR; i < INV_SIZE; i++) if (this.slots[i]) { items.push(this.slots[i]); this.slots[i] = null; }
     const merged = [];
@@ -210,7 +231,11 @@ export class Inventory {
   serialize() { return this.slots.map(s => (s ? { ...s } : null)); }
   load(arr) {
     this.slots = new Array(TOTAL).fill(null);
-    if (Array.isArray(arr)) arr.forEach((s, i) => { if (s && ITEMS[s.id] && i < TOTAL && this.fits(i, s)) this.slots[i] = { ...s }; });
+    if (Array.isArray(arr)) arr.forEach((s, i) => {
+      if (!s || !ITEMS[s.id] || i >= TOTAL || !this.fits(i, s)) return;
+      this.slots[i] = { ...s };
+      if (s.sight && !canMount(s.id, s.sight)) delete this.slots[i].sight;
+    });
     this.changed();
   }
   clear() { this.slots.fill(null); this.changed(); }

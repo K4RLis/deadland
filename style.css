@@ -119,6 +119,7 @@ input:focus { border-color: var(--amber); }
 .slot img { position: absolute; inset: 3px; width: calc(100% - 6px); height: calc(100% - 6px); pointer-events: none; }
 .slot .n { position: absolute; right: 3px; bottom: 1px; font-size: 12px; font-weight: 700; text-shadow: 1px 1px 0 #000; pointer-events: none; }
 .slot .k { position: absolute; left: 3px; top: 1px; font-size: 10px; color: var(--muted); pointer-events: none; }
+.slot .sg { position: absolute; right: 3px; top: 1px; font-size: 10px; font-weight: 700; color: #ff7a5c; text-shadow: 1px 1px 0 #000; pointer-events: none; }
 .slot .am { position: absolute; left: 3px; right: 3px; bottom: 2px; height: 3px; background: rgba(255, 255, 255, 0.12); pointer-events: none; }
 .slot .am i { display: block; height: 100%; background: var(--amber); }
 .slot.sel { border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber); background: rgba(60, 54, 30, 0.85); }
@@ -157,9 +158,25 @@ input:focus { border-color: var(--amber); }
 .xpbar i { display: block; height: 100%; width: 0; background: #8fc0e8; }
 #xp-lvl { font: 13px 'Russo One'; color: #8fc0e8; text-shadow: 1px 1px 0 #000; }
 #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 45%, rgba(160, 0, 0, 0.75) 100%); opacity: 0; }
-#scope { position: absolute; inset: 0; display: none; background:
+#scope { position: absolute; inset: 0; display: none; pointer-events: none; }
+#scope.sniper { background:
   linear-gradient(#000, #000) center/2px 100% no-repeat, linear-gradient(#000, #000) center/100% 2px no-repeat,
   radial-gradient(circle at center, transparent 0, transparent 37vh, #000 37.3vh); }
+/* 2×: широкое поле, красное кольцо с точкой */
+#scope.x2 { background: radial-gradient(circle at center, transparent 0, transparent 41vh, rgba(0, 0, 0, 0.6) 45.5vh, #000 46vh); }
+#scope.x2::before { content: ''; position: absolute; left: 50%; top: 50%; width: 15vh; height: 15vh; transform: translate(-50%, -50%);
+  border: 2px solid rgba(255, 52, 40, 0.9); border-radius: 50%; box-shadow: 0 0 5px rgba(255, 40, 30, 0.55); }
+#scope.x2::after { content: ''; position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; transform: translate(-50%, -50%);
+  background: #ff3a2a; border-radius: 50%; box-shadow: 0 0 6px #ff3a2a; }
+/* 4×: тонкое перекрестие, толстый столбик снизу, красный шеврон в центре */
+#scope.x4 { background:
+  linear-gradient(#0c0c0c, #0c0c0c) center calc(50% + 19vh) / 5px 38vh no-repeat,
+  linear-gradient(#0c0c0c, #0c0c0c) center calc(50% - 19vh) / 1.5px 38vh no-repeat,
+  linear-gradient(#0c0c0c, #0c0c0c) center / 100% 1.5px no-repeat,
+  radial-gradient(circle at center, transparent 0, transparent 33vh, rgba(0, 0, 0, 0.6) 37.5vh, #000 38vh); }
+#scope.x4::after { content: ''; position: absolute; left: 50%; top: 50%; width: 0; height: 0; transform: translateX(-50%);
+  border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 13px solid #ff3a2a;
+  filter: drop-shadow(0 0 3px rgba(255, 40, 30, 0.7)); }
 #chat { position: absolute; left: 18px; bottom: 150px; width: 420px; }
 #chat-log { max-height: 42vh; overflow: hidden; }
 #chat.open #chat-log { overflow-y: auto; pointer-events: auto; background: rgba(10, 12, 14, 0.35); }

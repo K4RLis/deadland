@@ -1,7 +1,7 @@
 // Предмет в руках: стрельба, ближний бой, добыча ресурсов, еда/лечение, установка блоков.
 import * as THREE from 'three';
-import { ITEMS, FISTS } from './items.js';
-import { itemModel, makeViewArms, makeFist, GUN_K, gunFitY, FITTED_GUNS } from './models.js';
+import { ITEMS, FISTS, heldKey } from './items.js';
+import { itemModel, makeViewArms, makeFist, GUN_K, gunFitY, FITTED_GUNS, sightAt } from './models.js';
 import { BLOCK_TYPES } from './blocks.js';
 
 // во сколько раз всё, что держат в руках (кроме готовых моделей), крупнее натуральной величины
@@ -17,8 +17,10 @@ for (const id of ['rifle', 'qbz', 'asval']) { MUZZLE[id] *= GUN_K; MUZZLE_Y[id] 
 const easeOut = t => 1 - (1 - t) * (1 - t);
 const easeInOut = t => t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
 const _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _d = new THREE.Vector3(), _o = new THREE.Vector3(), _e = new THREE.Vector3(), _s = new THREE.Vector3();
-// РПГ без гранаты — пустая труба
-const modelKey = (id, slot) => (id === 'rpg' && slot && slot.ammo <= 0 ? 'rpg_e' : id);
+// РПГ без гранаты — пустая труба; оружие с прицелом — «rifle+scope4»
+const modelKey = (id, slot) => heldKey(id === 'rpg' && slot && slot.ammo <= 0 ? 'rpg_e' : id, slot && slot.sight);
+// глаз при прицеливании — на таком расстоянии от заднего края прицела (в его натуральных размерах)
+const EYE = { reddot: 0.085, scope2: 0.06, scope4: 0.06 };
 
 export class Weapons {
   constructor(game) {
@@ -43,6 +45,7 @@ export class Weapons {
     this.harvestHits = new Map();
     this.buildRot = 0;
     this.zoomNow = 1;
+    this.sight = null; this.adsY = 0.1; this.adsZ = -0.3;
     const flashMat = new THREE.MeshBasicMaterial({ color: 0xffd080, transparent: true, opacity: 0.9, depthWrite: false });
     this.flash = new THREE.Mesh(new THREE.OctahedronGeometry(0.06, 0), flashMat);
     this.flash.visible = false;
@@ -84,6 +87,7 @@ export class Weapons {
     if (def && !FITTED_GUNS.has(id) && def.cat !== 'block') { const k = VM_KS[id] || VM_K; this.model.scale.setScalar(k); this.model.position.y = -(k - 1) * 0.08; }
     this.model.traverse(o => { o.castShadow = false; });
     this.hold.add(this.model);
+    this.setSight(mk);
     this.equipT = 0.3;
     this.reloadT = 0; this.useT = 0; this.swingT = 0; this.meleePending = null;
     this.g.blocks.hideGhost();
@@ -96,7 +100,23 @@ export class Weapons {
     if (this.itemMesh) this.model.remove(this.itemMesh);
     this.model.add(m);
     this.itemMesh = m; this.curMk = mk;
+    this.setSight(mk);
   }
+
+  // прицел на оружии: на какой высоте ось и куда встаёт глаз при прицеливании (в системе удержания)
+  setSight(mk) {
+    const [id, sight] = String(mk || '').split('+');
+    this.sight = sight || null;
+    this.adsY = 0.1; this.adsZ = -0.3;
+    const at = sight && sightAt(id, sight);
+    if (!at || !this.model) return;
+    const k = this.model.scale.x;
+    this.adsY = at.y * k + this.model.position.y;
+    this.adsZ = -at.back * k - EYE[sight] * at.k * k;
+  }
+
+  // что видят другие игроки у меня в руках
+  get lookKey() { return this.curId ? heldKey(this.curId, this.sight) : ''; }
 
   get def() { return this.curId ? ITEMS[this.curId] : null; }
 
@@ -116,12 +136,15 @@ export class Weapons {
     // прицеливание
     const wantAds = ctl && inp.rmb && def && def.cat === 'gun' && this.reloadT <= 0 && !P.sprint;
     this.ads += ((wantAds ? 1 : 0) - this.ads) * Math.min(1, dt * 12);
-    const zoom = def && def.cat === 'gun' ? def.zoom : 1;
+    const sd = this.sight ? ITEMS[this.sight] : null;
+    const zoom = def && def.cat === 'gun' ? Math.max(def.zoom, sd ? sd.zoom : 1) : 1;
     this.zoomNow = 1 + (zoom - 1) * this.ads;
     const fov = g.settings.fov / this.zoomNow;
     if (Math.abs(g.camera.fov - fov) > 0.01) { g.camera.fov = fov; g.camera.updateProjectionMatrix(); }
-    const scoped = def && def.scope && this.ads > 0.85;
-    g.ui.setScope(scoped);
+    // оптика (своя у снайперки и РПГ или поставленная 2×/4×): при прицеливании — вид в окуляр
+    const scopeKind = sd ? sd.scope : def && def.scope ? 'sniper' : null;
+    const scoped = !!scopeKind && this.ads > 0.85;
+    g.ui.setScope(scoped ? scopeKind : null);
     this.root.visible = !scoped && P.alive;
 
     // перезарядка
@@ -218,7 +241,7 @@ export class Weapons {
     this.camVectors();
     if (def.rocket) { this.fireRocket(def); return; }
     const hs = Math.hypot(P.vel.x, P.vel.z);
-    let sp = this.ads > 0.5 ? (def.adsSpread ?? def.spread * 0.35) : def.spread;
+    let sp = this.ads > 0.5 ? (def.adsSpread ?? def.spread * 0.35) * (this.sight ? ITEMS[this.sight].acc : 1) : def.spread;
     sp *= (hs > 1 ? 1.7 : 1) * (P.crouch ? 0.7 : 1) * (P.grounded ? 1 : 2.2);
     const pellets = def.pellets || 1;
     let firstEnd = null;
@@ -448,7 +471,7 @@ export class Weapons {
     const ads = this.ads;
     let px = 0.22, py = -0.22, pz = -0.42, rx = 0, ry = 0, rz = 0;
     if (cat === 'gun') {
-      px = 0.2 * (1 - ads); py = -0.2 * (1 - ads) - 0.1 * ads; pz = -0.42 * (1 - ads) - 0.3 * ads;
+      px = 0.2 * (1 - ads); py = -0.2 * (1 - ads) - this.adsY * ads; pz = -0.42 * (1 - ads) + this.adsZ * ads;
       // длинная труба РПГ — дальше от глаз, иначе раструб закрывает пол-экрана
       if (this.curId === 'rpg') { px += 0.03 * (1 - ads); py -= 0.02 * (1 - ads); pz -= 0.26; }
       // пистолет маленький — держим выше и ближе к центру, чтобы была видна кисть на рукояти

@@ -12,7 +12,7 @@ import { Inventory, HOTBAR, INV_SIZE, ARMOR_AT } from './inventory.js';
 import { Weapons } from './weapons.js';
 import { Rockets } from './rockets.js';
 import { ZombieSim, ZombieViews, ZTYPES, ZT } from './zombies.js';
-import { ITEMS, makeItem, rollLoot, xpNeed, QUESTS, STATION_NAMES } from './items.js';
+import { ITEMS, makeItem, rollLoot, xpNeed, QUESTS, STATION_NAMES, canMount, cleanHeld, heldBase } from './items.js';
 import { makePlayerModel, animate, makeNameTag, itemModel, makeBag, FITTED_GUNS, GUN_K } from './models.js';
 import { smooth, clamp, angleLerp } from './rng.js';
 import { MeshBuilder, lin, mat } from './mesh.js';
@@ -38,6 +38,7 @@ const TOOLS = new Set(['axe', 'pickaxe', 'iaxe', 'ipick']);
 const TEST_KIT = ['pistol', 'smg', 'shotgun', 'rifle', 'qbz', 'asval', 'sniper', 'rpg', 'iaxe', 'ipick'];
 const BLAST_R = 7; // радиус поражения гранаты РПГ, м
 const TEST_ARMOR = ['helmet', 'milvest', 'kneepads'];
+const TEST_SIGHTS = ['reddot', 'scope2', 'scope4'];
 
 export class Game {
   constructor(o) {
@@ -573,7 +574,7 @@ export class Game {
     if (this.snapT <= 0 && this.net && this.net.conns.size) {
       this.snapT = 0.1;
       const P = this.player;
-      const all = [[this.myId, +P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2), this.weapons.curId || '', this.myFlags(), Math.round(P.hp), this.armorLook()]];
+      const all = [[this.myId, +P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2), this.weapons.lookKey, this.myFlags(), Math.round(P.hp), this.armorLook()]];
       for (const p of this.hplayers.values()) if (p.y > -500) all.push([p.pid, p.x, p.y, p.z, p.yaw, p.pitch, p.w, p.f, p.hp, p.ar || '']);
       for (const pid of this.net.conns.keys()) {
         const me = this.hplayers.get(pid);
@@ -615,7 +616,7 @@ export class Game {
       case 'st':
         if (!hp || !Array.isArray(m.p)) return;
         hp.x = +m.p[0]; hp.y = +m.p[1]; hp.z = +m.p[2]; hp.yaw = +m.p[3]; hp.pitch = +m.p[4];
-        hp.w = ITEMS[m.w] ? m.w : ''; hp.f = m.f | 0; hp.hp = m.hp | 0;
+        hp.w = cleanHeld(m.w); hp.f = m.f | 0; hp.hp = m.hp | 0;
         hp.ar = typeof m.ar === 'string' ? m.ar.slice(0, 60) : '';
         hp.alive = !(hp.f & 2);
         this.syncOther([pid, hp.x, hp.y, hp.z, hp.yaw, hp.pitch, hp.w, hp.f, hp.hp, hp.ar]);
@@ -912,7 +913,7 @@ export class Game {
     if (this.sendT <= 0) {
       this.sendT = 1 / 15;
       const P = this.player;
-      this.net.toHost({ t: 'st', p: [+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2)], w: this.weapons.curId || '', f: this.myFlags(), hp: Math.round(P.hp), ar: this.armorLook() });
+      this.net.toHost({ t: 'st', p: [+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2), +P.yaw.toFixed(3), +P.pitch.toFixed(2)], w: this.weapons.lookKey, f: this.myFlags(), hp: Math.round(P.hp), ar: this.armorLook() });
     }
     this.saveT -= dt;
     if (this.saveT <= 0) this.saveAll(false);
@@ -1091,12 +1092,13 @@ export class Game {
       o.w = w;
       const hand = o.mesh.userData.hand;
       while (hand.children.length) hand.remove(hand.children[0]);
-      if (w && ITEMS[w]) {
+      const id = heldBase(w);
+      if (id && ITEMS[id]) {
         const im = itemModel(w);
         im.rotation.x = -Math.PI / 2;
-        if (ITEMS[w].cat === 'block') im.scale.setScalar(2);
+        if (ITEMS[id].cat === 'block') im.scale.setScalar(2);
         // готовые модели оружия увеличены для вида от первого лица — у других игроков почти натуральный размер
-        if (FITTED_GUNS.has(w)) im.scale.setScalar(1.12 / GUN_K);
+        if (FITTED_GUNS.has(id)) im.scale.setScalar(1.12 / GUN_K);
         hand.add(im);
       }
     }
@@ -1123,7 +1125,7 @@ export class Game {
       const dead = !!(o.f & 2);
       o.mesh.rotation.x = dead ? -Math.PI / 2 : 0;
       o.tag.visible = !dead;
-      const aim = o.w && ITEMS[o.w] && ITEMS[o.w].cat === 'gun';
+      const wd = o.w && ITEMS[heldBase(o.w)], aim = !!wd && wd.cat === 'gun';
       o.sw = (o.sw || 0) + (((o.f & 16) ? 1 : 0) - (o.sw || 0)) * Math.min(1, dt * 14);
       animate(o.mesh, dt, dead ? 0 : sp, { aim, pitch: o.pitch, crouch: !!(o.f & 1), swing: o.sw * 0.9 });
     }
@@ -1317,6 +1319,16 @@ export class Game {
       if (this.inv.toggleArmor(i)) this.sfx.click(); else this.ui.toast('Рюкзак полон');
       return;
     }
+    // прицел — на оружие в руках
+    if (def.cat === 'sight') {
+      const gun = this.inv.slots[P.sel];
+      if (gun && canMount(gun.id, it.id)) {
+        this.inv.move(i, P.sel);
+        this.sfx.click();
+        this.ui.toast(`${def.name}: на ${ITEMS[gun.id].name}`);
+      } else this.ui.toast('Возьми в руки пистолет, ПП или автомат — или перетащи прицел на оружие');
+      return;
+    }
     if (def.cat === 'food' || def.cat === 'med') {
       if (def.heal) P.hp = Math.min(P.maxHp, P.hp + def.heal);
       if (def.food) P.food = clamp(P.food + def.food, 0, 100);
@@ -1475,6 +1487,11 @@ export class Game {
     for (const id of TEST_ARMOR) {
       const at = ARMOR_AT[ITEMS[id].slot];
       if (!inv.slots[at] && inv.count(id) <= 0) { inv.slots[at] = makeItem(id, 1); inv.changed(); }
+    }
+    // прицелы — в рюкзак, если ни в рюкзаке, ни на оружии их нет
+    for (const id of TEST_SIGHTS) {
+      if (inv.count(id) > 0 || inv.slots.some(s => s && s.sight === id)) continue;
+      inv.addItem(makeItem(id, 1), false);
     }
     const missing = TEST_KIT.filter(id => inv.count(id) <= 0);
     if (!missing.length) return;
