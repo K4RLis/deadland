@@ -111,7 +111,12 @@ function posedWorlds(pose) {
 export function _joints(pose) {
   if (!D) return null;
   const Wp = posedWorlds(pose), out = {};
-  D.FING.forEach((ch, f) => ch.forEach((i, s) => { out['f' + f + s] = new THREE.Vector3().setFromMatrixPosition(Wp[i]).toArray(); }));
+  D.FING.forEach((ch, f) => {
+    ch.forEach((i, s) => { out['f' + f + s] = new THREE.Vector3().setFromMatrixPosition(Wp[i]).toArray(); });
+    // кончик пальца — сустав за TOP
+    const tip = D.parent.indexOf(ch[2]);
+    if (tip >= 0) out['f' + f + '3'] = new THREE.Vector3().setFromMatrixPosition(Wp[tip]).toArray();
+  });
   D.TH.forEach((i, s) => { out['t' + s] = new THREE.Vector3().setFromMatrixPosition(Wp[i]).toArray(); });
   // кончик большого пальца — следующий сустав за TOP
   const tip = D.parent.indexOf(D.TH[2]);

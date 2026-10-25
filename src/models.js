@@ -1706,7 +1706,7 @@ function reddotModel(g) {
   cyl(g, 0.0062, 0.008, SB, r + 0.004, H, 0.004, 0, 0, PI2);
   cyl(g, 0.0055, 0.006, SB, 0, H + r + 0.004, 0.004);
   glass(g, r, H, -0.019);
-  part(g, 0.0015, 0.0015, 0.0015, 0xff2a20, 0, H, -0.017, 0, 0, 0, ICO, 0xff2a20);
+  part(g, 0.00038, 0.00038, 0.00038, 0xff2a20, 0, H, -0.017, 0, 0, 0, ICO, 0xff2a20);
 }
 
 // оптика: труба на двух кольцах, раструб объектива, окуляр с наглазником, барабанчики; у 4× — оптоволокно сверху
@@ -1940,6 +1940,57 @@ function wristOf(h) {
   return new THREE.Vector3(0, -0.002, 0.05).applyMatrix4(h.matrix);
 }
 
+// Хват готовой кисти за рукоять: позы пальцев подобраны под рукоять радиуса r (в системе кисти, поиском по суставам) —
+// пальцы ложатся на неё без зазора и не уходят внутрь, большой палец закрывает с другой стороны.
+// Рукоять идёт вдоль оси x кисти, её центр — WRAP_C (x — середина кулака, у левой кисти зеркально).
+// [r, curl по пальцам, большой палец: swing, twist, flex×3]
+const WRAP = [
+  [0.011, [[1.15, 0.35, 0.725], [1.075, 0.55, 0.8], [1.1, 0.15, 0.9], [0.8, 0.15, 0.725]], [1.2, 0, -0.1, 1.4, 0]],
+  [0.012, [[1.125, 0.275, 0.725], [1.025, 0.55, 0.675], [1.075, 0.075, 0.9], [0.775, 0.1, 0.7]], [1.1, 0, -0.2, 0.9, 0]],
+  [0.013, [[1.075, 0.275, 0.65], [1, 0.5, 0.65], [1.05, 0.05, 0.825], [0.725, 0.15, 0.525]], [1.1, 0, -0.3, 1.2, 0]],
+  [0.014, [[1.05, 0.225, 0.6], [1, 0.4, 0.675], [1.025, 0, 0.8], [0.725, 0.05, 0.575]], [1.1, 0.1, -0.3, 1.3, 0]],
+  [0.015, [[1.025, 0.175, 0.6], [0.975, 0.35, 0.675], [0.95, 0.1, 0.575], [0.7, 0.025, 0.55]], [1.2, 0.2, -0.2, 1, 0]],
+  [0.016, [[1, 0.125, 0.6], [0.95, 0.325, 0.625], [0.95, 0.025, 0.6], [0.625, 0.15, 0.35]], [1.2, 0.2, -0.3, 1.2, 0]],
+  [0.017, [[0.925, 0.225, 0.375], [0.95, 0.225, 0.675], [0.95, -0.075, 0.7], [0.65, 0, 0.475]], [1.2, 0.2, -0.4, 1.3, 0]],
+  [0.018, [[0.925, 0.125, 0.475], [0.925, 0.2, 0.65], [0.925, -0.075, 0.575], [0.65, -0.075, 0.5]], [1.2, 0.2, -0.4, 1, 0]],
+  [0.019, [[0.9, 0.1, 0.475], [0.9, 0.2, 0.575], [0.85, 0.05, 0.4], [0.6, 0, 0.375]], [1.2, 0.3, -0.4, 1.1, 0]],
+];
+const WRAP_X = 0.0065, WRAP_Z = -0.032;
+
+// поза под рукоять радиуса r: между соседними строками таблицы
+function wrapPose(r) {
+  const i = Math.max(0, Math.min(WRAP.length - 2, Math.floor((r - WRAP[0][0]) / 0.001)));
+  const A = WRAP[i], B = WRAP[i + 1], t = Math.max(0, Math.min(1, (r - A[0]) / (B[0] - A[0])));
+  const mix = (a, b) => a + (b - a) * t;
+  const th = A[2].map((v, j) => mix(v, B[2][j]));
+  return {
+    curl: A[1].map((c, f) => c.map((v, j) => mix(v, B[1][f][j]))), spread: 0.3,
+    rt: { swing: th[0], twist: th[1], flex: th.slice(2) },
+  };
+}
+
+// кисть обхватывает рукоять (система p): P — точка на её оси, u — ось к рабочему концу (клинок, ствол, обух),
+// wrist — куда примерно смотрит запястье, arm — куда уходит предплечье, r — радиус рукояти, k — масштаб кисти;
+// o.index — своя поза указательного (на спуске)
+function wrapHand(p, side, skin, sleeve, P, u, wrist, arm, r, k, o = {}) {
+  const rr = r / k, pose = wrapPose(rr);
+  if (o.index) pose.curl[0] = o.index;
+  const X = new THREE.Vector3(...u).normalize().multiplyScalar(side > 0 ? -1 : 1);
+  const Z = new THREE.Vector3(...wrist); Z.addScaledVector(X, -Z.dot(X)).normalize();
+  const Y = new THREE.Vector3().crossVectors(Z, X);
+  const A = new THREE.Group();
+  A.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+  A.scale.setScalar(k);
+  const c = new THREE.Vector3(WRAP_X * side, -0.016 - rr, WRAP_Z).applyQuaternion(A.quaternion).multiplyScalar(k);
+  A.position.set(P[0] - c.x, P[1] - c.y, P[2] - c.z);
+  p.add(A);
+  hand(A, side, skin, pose);
+  // предплечье: направление в системе кисти → углы группы рукава
+  const d = new THREE.Vector3(...arm).normalize().applyQuaternion(A.quaternion.clone().invert());
+  forearm(A, skin, sleeve, 0, -0.002, 0.05, Math.atan2(-d.y, d.z), Math.asin(Math.max(-1, Math.min(1, d.x))));
+  return A;
+}
+
 // предплечье: запястье, кожа, подвёрнутая манжета и рукав со складками; группа смотрит вдоль +z от запястья к локтю
 function forearm(p, skin, sleeve, x, y, z, rx, ry) {
   const a = sub(p, x, y, z, rx, ry, 0);
@@ -1979,7 +2030,13 @@ function forearm(p, skin, sleeve, x, y, z, rx, ry) {
 
 // правая кисть на пистолетной рукояти (рамка наклонена вместе с рукоятью):
 // ладонь справа и сзади рукояти, пальцы обхватывают переднюю грань, указательный — у спуска, большой — слева на рамке
-function gripHand(p, skin, sleeve, y, z, rake, k = 1) {
+function gripHand(p, skin, sleeve, y, z, rake, k = 1, r = 0.021) {
+  if (rigReady()) {
+    // готовая кисть вокруг рукояти: указательный у её верха и на спуске, тыльная сторона справа-сзади
+    const dn = [0, -Math.cos(rake), Math.sin(rake)], t = 0.018 * k;
+    wrapHand(p, 1, skin, sleeve, [0, y + dn[1] * t, z + dn[2] * t], [0, -dn[1], -dn[2]], [0.3, -0.25, 1], [0.25, -0.5, 0.85], r, k, { index: [0.3, 0.45, 0.25] });
+    return;
+  }
   const G = sub(p, 0, y, z, -rake);
   G.scale.setScalar(k);
   const h = hand(G, 1, skin, {
@@ -2024,23 +2081,15 @@ function supportHand(p, skin, sleeve, y, z, k = 1, guard = GUARD_AK) {
 }
 
 // кулак вокруг рукояти, идущей вдоль z: тыльная сторона справа, пальцы снизу, большой палец сверху
-function fistOnHandle(p, skin, sleeve, z, k = 1) {
+function fistOnHandle(p, skin, sleeve, z, k = 1, r = 0.018, cy = 0) {
+  // готовая кисть — по-настоящему вокруг рукояти: клинок или обух вперёд, запястье вниз-вправо, рукав к правому нижнему углу
+  if (rigReady()) { wrapHand(p, 1, skin, sleeve, [0, cy, z], [0, 0, -1], [0.45, -0.85, 0.2], [0.35, -0.6, 0.72], r, k); return; }
   const Hd = sub(p, 0, 0, z);
   Hd.scale.setScalar(k);
   const h = hand(Hd, 1, skin, {
     curl: [[1.35, 1.45, 0.75], [1.4, 1.5, 0.75], [1.45, 1.5, 0.75], [1.5, 1.45, 0.7]], spread: 0.15,
     thumb: { yaw: 0.6, pitch: 0.75, roll: 1.2, c: [0.3, 0.45, 0.3] },
-    rt: { swing: -0.15, twist: -1.3, flex: [-0.15, 0.85, 1.1] },
   });
-  if (rigReady()) {
-    // готовая кисть: рукоять наискось через ладонь, тыльная сторона к глазу (влево), запястье вниз-назад —
-    // рукав уходит вниз и не заслоняет кулак
-    h.position.set(-0.034, -0.01, 0.006);
-    basis(h, [0, 0.8, 0.6], [-1, 0, 0], [0, -0.6, 0.8]);
-    const w = wristOf(h);
-    forearm(Hd, skin, sleeve, w.x, w.y, w.z, 0.95, -0.15);
-    return;
-  }
   h.position.set(0.03, 0.006, 0);
   basis(h, [0, 0, 1], [1, 0, 0], [0, 1, 0]);
   h.rotateX(0.5);
@@ -2062,18 +2111,20 @@ function palmHand(p, skin, sleeve, y) {
   forearm(P, skin, sleeve, w.x, w.y, w.z, 0.5, 0.2);
 }
 
-const VM_GRIP = { pistol: [-0.008, 0.032, 0.28], smg: [-0.03, 0.04, 0.28], shotgun: [-0.004, 0.125, 0.95], rifle: [0.0, -0.01, 0.32], qbz: [-0.018, -0.026, 0.46], asval: [0.023, -0.008, 0.36], sniper: [-0.04, 0.085, 0.35], rpg: [0.044, 0.016, 0.22], rpg_e: [0.044, 0.016, 0.22] };
+// рукоять: [верх по y, по z, наклон, радиус обхвата]
+const VM_GRIP = { pistol: [-0.008, 0.032, 0.28, 0.021], smg: [-0.03, 0.04, 0.28, 0.021], shotgun: [-0.012, 0.112, 0.75, 0.025], rifle: [0.0, -0.01, 0.32, 0.0145], qbz: [-0.018, -0.026, 0.46, 0.0167], asval: [0.023, -0.008, 0.36, 0.015], sniper: [-0.04, 0.085, 0.35, 0.024], rpg: [0.044, 0.016, 0.22, 0.02], rpg_e: [0.044, 0.016, 0.22, 0.02] };
 const VM_SUPPORT = { smg: [-0.05, -0.17], shotgun: [-0.056, -0.33], rifle: [0.02, -0.31], qbz: [0.004, -0.27], asval: [0.042, -0.215], sniper: [-0.062, -0.22], rpg: [0.043, -0.15], rpg_e: [0.043, -0.15] };
 // точки хвата у увеличенных готовых моделей
 for (const id in GUN_FIT) {
   const gr = VM_GRIP[id], sp = VM_SUPPORT[id];
-  VM_GRIP[id] = [gunFitY(gr[0]), gr[1] * GUN_K, gr[2]];
+  VM_GRIP[id] = [gunFitY(gr[0]), gr[1] * GUN_K, gr[2], gr[3] * GUN_K];
   VM_SUPPORT[id] = [gunFitY(sp[0]), sp[1] * GUN_K];
 }
 // цевьё у левой кисти: [нижняя грань, полуширина] в системе кисти (после увеличения k)
 const GUARD_AK = [0.0067, 0.0156];
 const VM_GUARD = { smg: [0.0104, 0.0204], shotgun: [0.0104, 0.0185], qbz: [0.0104, 0.0228], asval: [-0.0098, 0.0222], sniper: [0.0111, 0.0197], rpg: [0.0111, 0.022], rpg_e: [0.0111, 0.022] };
-const VM_HANDLE = { knife: 0.01, bat: 0.1, axe: 0.08, pickaxe: 0.08, iaxe: 0.08, ipick: 0.08, machete: 0.01, hammer: 0.07 };
+// рукоять холодного оружия: [где кулак по z, радиус, центр по y]
+const VM_HANDLE = { knife: [0.012, 0.016, -0.002], bat: [0.1, 0.022, 0], axe: [0.08, 0.0185, 0], pickaxe: [0.08, 0.0185, 0], iaxe: [0.08, 0.0185, 0], ipick: [0.08, 0.0185, 0], machete: [0.01, 0.017, 0], hammer: [0.07, 0.0175, 0] };
 
 // руки для предмета в руках: оружие держат двумя руками, холодное — кулаком за рукоять
 export function makeViewArms(id, cat, skin, sleeve) {
@@ -2082,11 +2133,11 @@ export function makeViewArms(id, cat, skin, sleeve) {
   if (cat === 'gun') {
     // у готовых моделей ствол увеличен в GUN_K раз — руки вокруг хвата во столько же
     // у старых моделей готовая кисть тоже крупнее натуральной — иначе теряется на рукояти
-    const [y, z, rake] = VM_GRIP[id] || VM_GRIP.rifle, k = !rigReady() ? 1 : FITTED_GUNS.has(id) ? GUN_K : 1.35;
-    gripHand(g, skin, sleeve, y, z, rake, k);
+    const [y, z, rake, r] = VM_GRIP[id] || VM_GRIP.rifle, k = !rigReady() ? 1 : FITTED_GUNS.has(id) ? GUN_K : 1.35;
+    gripHand(g, skin, sleeve, y, z, rake, k, r);
     const sp = VM_SUPPORT[id];
     if (sp) supportHand(g, skin, sleeve, sp[0], sp[1], k, VM_GUARD[id]);
-  } else if (cat === 'melee') fistOnHandle(g, skin, sleeve, VM_HANDLE[id] ?? 0.03, rigReady() ? 1.25 : 1);
+  } else if (cat === 'melee') { const [z, r, cy] = VM_HANDLE[id] || [0.03, 0.018, 0]; fistOnHandle(g, skin, sleeve, z, rigReady() ? 1.25 : 1, r, cy); }
   else palmHand(g, skin, sleeve, cat === 'block' ? -0.15 : -0.065);
   return fromBaked(bakeParts(g, 0, 'skin'));
 }

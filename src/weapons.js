@@ -483,7 +483,7 @@ export class Weapons {
       if (hy) { const k = 1 - ads; py += hy[0] * k; rx += hy[1] * k; }
     } else if (cat === 'melee') {
       // кулак на рукояти выше — его видно у нижнего края
-      px = 0.2; py = -0.13; pz = -0.5; rx = 0.15; ry = 0.15;
+      px = 0.2; py = -0.11; pz = -0.5; rx = 0.15; ry = 0.15;
     } else if (cat === 'fist') {
       px = 0.2; py = -0.26; pz = -0.4;
     } else if (cat === 'block') { px = 0.28; py = -0.28; pz = -0.5; ry = 0.6; }
