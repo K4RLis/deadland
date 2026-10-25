@@ -460,7 +460,9 @@ export class UI {
     $('vignette').style.opacity = Math.min(1, P.dmgFlash * 0.9 + (P.hp / P.maxHp < 0.3 ? 0.35 : 0));
     // прицел расходится при движении
     const sp = Math.min(16, 4 + Math.hypot(P.vel.x, P.vel.z) * 1.6 + (P.grounded ? 0 : 6)) * (1 - W.ads * 0.8);
-    const ch = $('crosshair').children;
+    const cr = $('crosshair'), ch = cr.children;
+    // при прицеливании перекрестие гаснет — целятся по мушке
+    cr.style.opacity = String(Math.max(0, 1 - W.ads * 2.2));
     ch[0].style.top = (-sp - 8) + 'px'; ch[1].style.top = sp + 'px';
     ch[2].style.left = (-sp - 8) + 'px'; ch[3].style.left = sp + 'px';
     this.drawCompass();
