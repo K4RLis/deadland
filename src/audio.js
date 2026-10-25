@@ -4,7 +4,7 @@ import { VERSION } from './config.js';
 // Записанные звуки: id → файлы в assets/sfx (несколько файлов — варианты, играются вперемешку).
 // Тишина в начале файла и слишком длинный хвост обрезаются при загрузке.
 const SAMPLE_FILES = {
-  pistol: ['pistol.wav'], smg: ['smg.wav'], shotgun: ['shotgun.wav'], rifle: ['rifle.wav'],
+  pistol: ['pistol.wav'], smg: ['smg.wav'], shotgun: ['shotgun.wav'], rifle: ['ak47.wav'], qbz: ['qbz.wav'],
   asval: ['asval.wav'], sniper: ['sniper.mp3'], hurt: ['hurt.mp3'],
 };
 const MAX_LEN = { sniper: 2.2, hurt: 1.2 };
@@ -150,7 +150,6 @@ export class Sfx {
 
   gun(kind, pos) {
     if (!this.ctx) return;
-    if (kind === 'qbz') kind = 'rifle';
     if (this.sample(kind, pos, kind === 'asval' ? 14 : 25, kind === 'asval' ? 240 : 500, 0.9)) return;
     const o = this.out(pos, 25, 500);
     if (!o) return;
